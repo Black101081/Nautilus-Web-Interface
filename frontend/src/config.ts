@@ -2,9 +2,9 @@
 // Hardcoded URLs for testing (will be replaced with database loading later)
 
 export const API_CONFIG = {
-  NAUTILUS_API_URL: 'https://8000-izgd9v56smwjcue9xjn05-99f39a2a.manusvm.computer',
+  NAUTILUS_API_URL: 'https://8003-izgd9v56smwjcue9xjn05-99f39a2a.manusvm.computer',
   ADMIN_DB_API_URL: 'https://8001-izgd9v56smwjcue9xjn05-99f39a2a.manusvm.computer',
-  TIMEOUT: 10000, // 10 seconds
+  TIMEOUT: 30000, // 30 seconds (backtest can take time)
 };
 
 // Dummy function for compatibility

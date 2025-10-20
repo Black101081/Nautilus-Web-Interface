@@ -14,10 +14,83 @@ export interface Instrument {
   venue: string;
 }
 
+export interface Strategy {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  instrument?: string;
+  pnl?: number;
+  trades?: number;
+  win_rate?: number;
+  created_at?: string;
+  last_backtest?: string;
+}
+
+export interface BacktestRequest {
+  strategy_id: string;
+  start_date: string;
+  end_date: string;
+  starting_balance: number;
+}
+
+export interface BacktestResult {
+  strategy_id: string;
+  start_date: string;
+  end_date: string;
+  starting_balance: number;
+  ending_balance: number;
+  total_pnl: number;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: number;
+  total_orders: number;
+  completed_at: string;
+  orders: Order[];
+  positions: Position[];
+}
+
+export interface Order {
+  id: string;
+  instrument_id: string;
+  side: string;
+  type: string;
+  quantity: number;
+  status: string;
+  filled_qty: number;
+  avg_px: number | null;
+  ts_init: number;
+}
+
+export interface Position {
+  id: string;
+  instrument_id: string;
+  side: string;
+  quantity: number;
+  avg_px_open: number;
+  avg_px_close: number | null;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  is_open: boolean;
+  is_closed: boolean;
+  ts_opened: number;
+  ts_closed: number | null;
+}
+
 export const nautilusService = {
   // Health check
   async healthCheck() {
-    return api.get<{ status: string; message: string }>('/api/health');
+    return api.get<{ status: string; system: any }>('/health');
+  },
+
+  // System operations
+  async initialize() {
+    return api.post<{ success: boolean; message: string }>('/api/nautilus/initialize', {});
+  },
+
+  async getSystemInfo() {
+    return api.get<any>('/api/nautilus/system-info');
   },
 
   // Engine info
@@ -28,6 +101,69 @@ export const nautilusService = {
   // Instruments
   async getInstruments() {
     return api.get<Instrument[]>('/api/instruments');
+  },
+
+  // Strategy operations
+  async createStrategy(config: {
+    id?: string;
+    name: string;
+    type: string;
+    instrument_id?: string;
+    bar_type?: string;
+    fast_period?: number;
+    slow_period?: number;
+    trade_size?: string;
+  }) {
+    return api.post<{ success: boolean; message: string; strategy_id?: string }>(
+      '/api/nautilus/strategies',
+      config
+    );
+  },
+
+  async listStrategies() {
+    return api.get<{ success: boolean; strategies: Strategy[]; count: number }>(
+      '/api/nautilus/strategies'
+    );
+  },
+
+  async getStrategy(strategyId: string) {
+    return api.get<{ success: boolean; strategy: Strategy }>(
+      `/api/nautilus/strategies/${strategyId}`
+    );
+  },
+
+  // Backtest operations
+  async runBacktest(request: BacktestRequest) {
+    return api.post<{ success: boolean; message: string; result?: BacktestResult }>(
+      '/api/nautilus/backtest',
+      request
+    );
+  },
+
+  async getBacktestResults(strategyId: string) {
+    return api.get<{ success: boolean; results: BacktestResult }>(
+      `/api/nautilus/backtest/${strategyId}`
+    );
+  },
+
+  // Legacy endpoints
+  async getOrders() {
+    return api.get<Order[]>('/api/orders');
+  },
+
+  async getPositions() {
+    return api.get<Position[]>('/api/positions');
+  },
+
+  async getRiskMetrics() {
+    return api.get<{
+      total_exposure: number;
+      var_95: number;
+      max_drawdown: number;
+      sharpe_ratio: number;
+      total_pnl: number;
+      total_trades: number;
+    }>('/api/risk/metrics');
   },
 
   // Database operations
