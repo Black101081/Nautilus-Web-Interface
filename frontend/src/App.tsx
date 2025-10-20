@@ -14,6 +14,8 @@ import FeaturesPage from "./pages/FeaturesPage";
 import AdaptersPage from "./pages/AdaptersPage";
 import MonitoringPage from "./pages/MonitoringPage";
 import SettingsPage from "./pages/SettingsPage";
+import AdminDBPage from "./pages/AdminDBPage";
+import DocsPage from "./pages/DocsPage";
 
 function Router() {
   return (
@@ -26,6 +28,8 @@ function Router() {
       <Route path="/admin/adapters" component={AdaptersPage} />
       <Route path="/admin/monitoring" component={MonitoringPage} />
       <Route path="/admin/settings" component={SettingsPage} />
+      <Route path="/admin/database-management" component={AdminDBPage} />
+      <Route path="/docs" component={DocsPage} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

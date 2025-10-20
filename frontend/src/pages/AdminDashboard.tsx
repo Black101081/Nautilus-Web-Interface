@@ -1,3 +1,4 @@
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNotification } from "@/contexts/NotificationContext";
@@ -184,8 +185,40 @@ export default function AdminDashboard() {
               <p className="text-sm text-gray-600 mb-4">
                 Configure system settings and preferences.
               </p>
-              <Button className="w-full" onClick={() => window.location.href = '/admin/settings'}>
-                Open Settings
+              <Button onClick={() => window.location.href = '/admin/settings'}>
+                Settings
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Database Management Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>🗄️ Database Management</CardTitle>
+              <CardDescription>System settings and configurations</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Manage system settings, users, and configurations.
+              </p>
+              <Button onClick={() => window.location.href = '/admin/database-management'}>
+                Manage Database
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Documentation Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>📚 Documentation</CardTitle>
+              <CardDescription>View project documentation</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Read the documentation for the Nautilus Web Interface.
+              </p>
+              <Button onClick={() => window.location.href = '/docs'}>
+                View Documentation
               </Button>
             </CardContent>
           </Card>
