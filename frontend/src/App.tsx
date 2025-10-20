@@ -10,6 +10,7 @@ import { NotificationContainer } from "./components/NotificationContainer";
 import Home from "./pages/Home";
 import NotFound from "./pages/NotFound";
 import AdminDashboard from "./pages/AdminDashboard";
+import TraderDashboard from "./pages/TraderDashboard";
 import DatabasePage from "./pages/DatabasePage";
 import ComponentsPage from "./pages/ComponentsPage";
 import FeaturesPage from "./pages/FeaturesPage";
@@ -26,7 +27,6 @@ import ApiConfigPage from "./pages/ApiConfigPage";
 import DatabaseManagementPage from "./pages/DatabaseManagementPage";
 
 function Router() {
-  // Load API config from database on mount
   useEffect(() => {
     loadApiConfig();
   }, []);
@@ -42,13 +42,14 @@ function Router() {
       <Route path="/admin/monitoring" component={MonitoringPage} />
       <Route path="/admin/settings" component={SettingsPage} />
       <Route path="/admin/database-management" component={AdminDBPage} />
-      <Route path="/docs" component={DocsPage} />
-      <Route path="/admin/strategies" component={StrategiesPage} />
-      <Route path="/admin/orders" component={OrdersPage} />
-      <Route path="/admin/positions" component={PositionsPage} />
-      <Route path="/admin/risk" component={RiskPage} />
       <Route path="/admin/api-config" component={ApiConfigPage} />
       <Route path="/admin/db-management" component={DatabaseManagementPage} />
+      <Route path="/trader" component={TraderDashboard} />
+      <Route path="/trader/strategies" component={StrategiesPage} />
+      <Route path="/trader/orders" component={OrdersPage} />
+      <Route path="/trader/positions" component={PositionsPage} />
+      <Route path="/trader/risk" component={RiskPage} />
+      <Route path="/docs" component={DocsPage} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
@@ -72,4 +73,3 @@ function App() {
 }
 
 export default App;
-

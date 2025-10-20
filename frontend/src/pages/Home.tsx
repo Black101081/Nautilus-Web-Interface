@@ -3,90 +3,62 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
       <div className="container mx-auto px-4 py-16">
-        <div className="text-center mb-12">
-          <h1 className="text-5xl font-bold text-gray-900 mb-4">
+        <div className="text-center mb-16">
+          <h1 className="text-6xl font-bold text-gray-900 mb-4">
             Nautilus Web Interface
           </h1>
-          <p className="text-xl text-gray-600 mb-8">
-            Professional admin interface for Nautilus Trader
+          <p className="text-2xl text-gray-600 mb-8">
+            Professional trading platform with comprehensive administration
           </p>
-          <div className="flex gap-4 justify-center">
-            <Button size="lg" onClick={() => window.location.href = '/admin'}>
-              Enter Admin Panel
-            </Button>
-            <Button size="lg" variant="outline" onClick={() => window.open('https://github.com/Black101081/Nautilus-Web-Interface', '_blank')}>
-              View on GitHub
-            </Button>
-          </div>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-          <Card>
-            <CardHeader>
-              <CardTitle>🚀 FastAPI Backend</CardTitle>
-              <CardDescription>RESTful API with 15+ endpoints</CardDescription>
+        <div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto mb-16">
+          <Card className="border-2 border-blue-200 hover:border-blue-400 transition-all hover:shadow-xl">
+            <CardHeader className="bg-gradient-to-r from-blue-500 to-blue-600 text-white">
+              <CardTitle className="text-3xl">📈 Trader Panel</CardTitle>
+              <CardDescription className="text-blue-100 text-lg">
+                Algorithmic trading operations
+              </CardDescription>
             </CardHeader>
-            <CardContent>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li>✓ Nautilus Trader integration</li>
-                <li>✓ Database operations</li>
-                <li>✓ Component management</li>
-                <li>✓ Real-time monitoring</li>
-              </ul>
+            <CardContent className="pt-6">
+              <p className="text-gray-700 mb-6">
+                Access all trading features powered by Nautilus Trader.
+              </p>
+              <Button 
+                size="lg" 
+                className="w-full bg-blue-600 hover:bg-blue-700"
+                onClick={() => window.location.href = '/trader'}
+              >
+                Enter Trader Panel →
+              </Button>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>⚛️ React Frontend</CardTitle>
-              <CardDescription>Modern TypeScript UI</CardDescription>
+          <Card className="border-2 border-gray-300 hover:border-gray-500 transition-all hover:shadow-xl">
+            <CardHeader className="bg-gradient-to-r from-gray-700 to-gray-800 text-white">
+              <CardTitle className="text-3xl">⚙️ Admin Panel</CardTitle>
+              <CardDescription className="text-gray-300 text-lg">
+                System administration
+              </CardDescription>
             </CardHeader>
-            <CardContent>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li>✓ 8 admin pages</li>
-                <li>✓ 140+ operations</li>
-                <li>✓ Notification system</li>
-                <li>✓ Responsive design</li>
-              </ul>
+            <CardContent className="pt-6">
+              <p className="text-gray-700 mb-6">
+                Comprehensive system administration tools.
+              </p>
+              <Button 
+                size="lg" 
+                variant="outline"
+                className="w-full border-2"
+                onClick={() => window.location.href = '/admin'}
+              >
+                Enter Admin Panel →
+              </Button>
             </CardContent>
           </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>📊 Full Stack</CardTitle>
-              <CardDescription>Production-ready system</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li>✓ End-to-end tested</li>
-                <li>✓ CI/CD pipeline</li>
-                <li>✓ Complete docs</li>
-                <li>✓ MIT License</li>
-              </ul>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="mt-12 text-center">
-          <p className="text-gray-600 mb-4">
-            Built with ❤️ for the Nautilus Trader community
-          </p>
-          <div className="flex gap-4 justify-center text-sm text-gray-500">
-            <a href="https://github.com/Black101081/Nautilus-Web-Interface" className="hover:text-gray-900">
-              GitHub
-            </a>
-            <span>•</span>
-            <a href="https://nautilustrader.io" className="hover:text-gray-900">
-              Nautilus Trader
-            </a>
-            <span>•</span>
-            <span>v1.0.0</span>
-          </div>
         </div>
       </div>
     </div>
   );
 }
-
