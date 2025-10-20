@@ -11,7 +11,11 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadEngineInfo();
+    // Wait a bit for config to load, then fetch engine info
+    const timer = setTimeout(() => {
+      loadEngineInfo();
+    }, 1000);
+    return () => clearTimeout(timer);
   }, []);
 
   const loadEngineInfo = async () => {

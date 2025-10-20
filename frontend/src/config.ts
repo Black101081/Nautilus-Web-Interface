@@ -1,9 +1,12 @@
 // API Configuration
 // Fetches API URLs from database on startup
 
-// Default fallback URLs (will be replaced by database values)
+// Default Admin DB API URL (bootstrap URL to fetch other endpoints)
+const DEFAULT_ADMIN_DB_API_URL = 'https://8001-izgd9v56smwjcue9xjn05-99f39a2a.manusvm.computer';
+
+// Runtime URLs (will be loaded from database)
 let NAUTILUS_API_URL = '';
-let ADMIN_DB_API_URL = 'https://8001-izgd9v56smwjcue9xjn05-99f39a2a.manusvm.computer';
+let ADMIN_DB_API_URL = DEFAULT_ADMIN_DB_API_URL;
 
 // Flag to track if config has been loaded
 let configLoaded = false;
@@ -16,10 +19,12 @@ export async function loadApiConfig(): Promise<void> {
   if (configLoaded) return;
   
   try {
+    console.log('🔄 Loading API config from database...');
+    
     // Fetch endpoints from admin DB API
     const response = await fetch(`${ADMIN_DB_API_URL}/api/admin/endpoints`, {
       method: 'GET',
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(10000)
     });
     
     if (response.ok) {
@@ -30,18 +35,22 @@ export async function loadApiConfig(): Promise<void> {
       endpoints.forEach((endpoint: any) => {
         if (endpoint.name === 'nautilus_api') {
           NAUTILUS_API_URL = endpoint.url;
+          console.log('✅ Nautilus API URL:', NAUTILUS_API_URL);
         } else if (endpoint.name === 'admin_db_api') {
           ADMIN_DB_API_URL = endpoint.url;
+          console.log('✅ Admin DB API URL:', ADMIN_DB_API_URL);
         }
       });
       
       configLoaded = true;
-      console.log('✅ API config loaded from database');
+      console.log('✅ API config loaded successfully');
     } else {
-      console.warn('⚠️ Failed to load API config from database, using defaults');
+      console.error('❌ Failed to load API config:', response.status);
+      throw new Error(`Failed to load config: ${response.status}`);
     }
   } catch (error) {
-    console.warn('⚠️ Error loading API config:', error);
+    console.error('❌ Error loading API config:', error);
+    throw error;
   }
 }
 
@@ -54,13 +63,8 @@ export const API_CONFIG = {
     return import.meta.env.VITE_ADMIN_DB_API_URL || ADMIN_DB_API_URL;
   },
   
-  // Force mock API mode when no backend available
-  get USE_MOCK_API() {
-    return import.meta.env.VITE_USE_MOCK_API === 'true' || !this.NAUTILUS_API_URL;
-  },
-  
   // API timeout
-  TIMEOUT: 5000, // 5 seconds
+  TIMEOUT: 10000, // 10 seconds
 };
 
 export default API_CONFIG;
