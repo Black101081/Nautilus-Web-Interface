@@ -22,6 +22,7 @@ import StrategiesPage from "./pages/StrategiesPage";
 import OrdersPage from "./pages/OrdersPage";
 import PositionsPage from "./pages/PositionsPage";
 import RiskPage from "./pages/RiskPage";
+import ApiConfigPage from "./pages/ApiConfigPage";
 
 function Router() {
   // Load API config from database on mount
@@ -45,6 +46,7 @@ function Router() {
       <Route path="/admin/orders" component={OrdersPage} />
       <Route path="/admin/positions" component={PositionsPage} />
       <Route path="/admin/risk" component={RiskPage} />
+      <Route path="/admin/api-config" component={ApiConfigPage} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

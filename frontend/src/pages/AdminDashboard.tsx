@@ -206,6 +206,22 @@ export default function AdminDashboard() {
             </CardContent>
           </Card>
 
+          {/* API Configuration Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>🔌 API Configuration</CardTitle>
+              <CardDescription>Backend API management</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Configure and test backend API endpoints.
+              </p>
+              <Button className="w-full" onClick={() => window.location.href = '/admin/api-config'}>
+                Manage APIs
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* Database Management Card */}
           <Card>
             <CardHeader>
