@@ -1,0 +1,52 @@
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
+import { Route, Switch } from "wouter";
+import ErrorBoundary from "./components/ErrorBoundary";
+import { ThemeProvider } from "./contexts/ThemeContext";
+import { NotificationProvider } from "./contexts/NotificationContext";
+import { NotificationContainer } from "./components/NotificationContainer";
+import Home from "./pages/Home";
+import NotFound from "./pages/NotFound";
+import AdminDashboard from "./pages/AdminDashboard";
+import DatabasePage from "./pages/DatabasePage";
+import ComponentsPage from "./pages/ComponentsPage";
+import FeaturesPage from "./pages/FeaturesPage";
+import AdaptersPage from "./pages/AdaptersPage";
+import MonitoringPage from "./pages/MonitoringPage";
+import SettingsPage from "./pages/SettingsPage";
+
+function Router() {
+  return (
+    <Switch>
+      <Route path="/" component={Home} />
+      <Route path="/admin" component={AdminDashboard} />
+      <Route path="/admin/database" component={DatabasePage} />
+      <Route path="/admin/components" component={ComponentsPage} />
+      <Route path="/admin/features" component={FeaturesPage} />
+      <Route path="/admin/adapters" component={AdaptersPage} />
+      <Route path="/admin/monitoring" component={MonitoringPage} />
+      <Route path="/admin/settings" component={SettingsPage} />
+      <Route path="/404" component={NotFound} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+function App() {
+  return (
+    <ErrorBoundary>
+      <ThemeProvider defaultTheme="light">
+        <NotificationProvider>
+          <TooltipProvider>
+            <Toaster />
+            <NotificationContainer />
+            <Router />
+          </TooltipProvider>
+        </NotificationProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
+  );
+}
+
+export default App;
+
