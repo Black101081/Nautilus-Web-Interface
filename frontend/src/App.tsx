@@ -1,5 +1,7 @@
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { useEffect } from "react";
+import { loadApiConfig } from "./config";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -22,6 +24,11 @@ import PositionsPage from "./pages/PositionsPage";
 import RiskPage from "./pages/RiskPage";
 
 function Router() {
+  // Load API config from database on mount
+  useEffect(() => {
+    loadApiConfig();
+  }, []);
+  
   return (
     <Switch>
       <Route path="/" component={Home} />

@@ -301,6 +301,31 @@ def update_adapter_status(adapter_id: int, status: str):
     conn.close()
     return {"message": f"Adapter status updated to '{status}'"}
 
+# API Endpoints Management
+@app.get("/api/admin/endpoints")
+def get_api_endpoints():
+    """Get all API endpoints"""
+    conn = get_db()
+    cursor = conn.execute("SELECT * FROM api_endpoints WHERE is_active = 1")
+    endpoints = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return {"endpoints": endpoints}
+
+@app.put("/api/admin/endpoints/{endpoint_id}")
+def update_api_endpoint(endpoint_id: int, data: dict):
+    """Update API endpoint URL"""
+    conn = get_db()
+    conn.execute(
+        "UPDATE api_endpoints SET url = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?",
+        (data.get("url"), endpoint_id)
+    )
+    if conn.total_changes == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "Endpoint updated"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=API_PORT)
