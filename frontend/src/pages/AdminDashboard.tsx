@@ -148,6 +148,21 @@ export default function AdminDashboard() {
 
           <Card>
             <CardHeader>
+              <CardTitle>📈 Strategies</CardTitle>
+              <CardDescription>Trading strategy management</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Manage and monitor your trading strategies.
+              </p>
+              <Button className="w-full" onClick={() => window.location.href = '/admin/strategies'}>
+                Open Strategies
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>🔌 Adapters</CardTitle>
               <CardDescription>Exchange/broker connections</CardDescription>
             </CardHeader>
@@ -203,6 +218,54 @@ export default function AdminDashboard() {
               </p>
               <Button onClick={() => window.location.href = '/admin/database-management'}>
                 Manage Database
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Orders Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>📋 Orders</CardTitle>
+              <CardDescription>Order management</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Create and manage trading orders.
+              </p>
+              <Button className="w-full" onClick={() => window.location.href = '/admin/orders'}>
+                Open Orders
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Positions Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>💼 Positions</CardTitle>
+              <CardDescription>Position tracking</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Monitor open positions and P&L.
+              </p>
+              <Button className="w-full" onClick={() => window.location.href = '/admin/positions'}>
+                Open Positions
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Risk Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>🛡️ Risk</CardTitle>
+              <CardDescription>Risk management</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Monitor and control trading risk.
+              </p>
+              <Button className="w-full" onClick={() => window.location.href = '/admin/risk'}>
+                Open Risk
               </Button>
             </CardContent>
           </Card>

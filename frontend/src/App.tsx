@@ -16,6 +16,10 @@ import MonitoringPage from "./pages/MonitoringPage";
 import SettingsPage from "./pages/SettingsPage";
 import AdminDBPage from "./pages/AdminDBPage";
 import DocsPage from "./pages/DocsPage";
+import StrategiesPage from "./pages/StrategiesPage";
+import OrdersPage from "./pages/OrdersPage";
+import PositionsPage from "./pages/PositionsPage";
+import RiskPage from "./pages/RiskPage";
 
 function Router() {
   return (
@@ -30,6 +34,10 @@ function Router() {
       <Route path="/admin/settings" component={SettingsPage} />
       <Route path="/admin/database-management" component={AdminDBPage} />
       <Route path="/docs" component={DocsPage} />
+      <Route path="/admin/strategies" component={StrategiesPage} />
+      <Route path="/admin/orders" component={OrdersPage} />
+      <Route path="/admin/positions" component={PositionsPage} />
+      <Route path="/admin/risk" component={RiskPage} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
