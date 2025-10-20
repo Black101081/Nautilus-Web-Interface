@@ -25,6 +25,10 @@ import PositionsPage from "./pages/PositionsPage";
 import RiskPage from "./pages/RiskPage";
 import ApiConfigPage from "./pages/ApiConfigPage";
 import DatabaseManagementPage from "./pages/DatabaseManagementPage";
+import MarketDataPage from "./pages/MarketDataPage";
+import PerformancePage from "./pages/PerformancePage";
+import AlertsPage from "./pages/AlertsPage";
+import BacktestingPage from "./pages/BacktestingPage";
 
 function Router() {
   useEffect(() => {
@@ -49,6 +53,10 @@ function Router() {
       <Route path="/trader/orders" component={OrdersPage} />
       <Route path="/trader/positions" component={PositionsPage} />
       <Route path="/trader/risk" component={RiskPage} />
+      <Route path="/trader/market-data" component={MarketDataPage} />
+      <Route path="/trader/performance" component={PerformancePage} />
+      <Route path="/trader/alerts" component={AlertsPage} />
+      <Route path="/trader/backtesting" component={BacktestingPage} />
       <Route path="/docs" component={DocsPage} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
