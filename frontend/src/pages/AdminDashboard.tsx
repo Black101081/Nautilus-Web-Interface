@@ -225,15 +225,15 @@ export default function AdminDashboard() {
           {/* Database Management Card */}
           <Card>
             <CardHeader>
-              <CardTitle>🗄️ Database Management</CardTitle>
-              <CardDescription>System settings and configurations</CardDescription>
+              <CardTitle>💾 Database Management</CardTitle>
+              <CardDescription>Comprehensive database administration</CardDescription>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-gray-600 mb-4">
-                Manage system settings, users, and configurations.
+                Manage database connections, execute queries, and create backups.
               </p>
-              <Button onClick={() => window.location.href = '/admin/database-management'}>
-                Manage Database
+              <Button onClick={() => window.location.href = '/admin/db-management'}>
+                Manage Databases
               </Button>
             </CardContent>
           </Card>
