@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   Cell,
 } from 'recharts';
-import { API_CONFIG } from '../config';
+import api from '../lib/api';
 
 interface PerformanceSummary {
   total_pnl: number;
@@ -59,20 +59,19 @@ export default function PerformancePage() {
   const fetchData = useCallback(async () => {
     try {
       const [summaryRes, tradesRes, riskRes] = await Promise.allSettled([
-        fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/performance/summary`),
-        fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/trades?limit=30`),
-        fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/risk/metrics`),
+        api.get<PerformanceSummary>('/api/performance/summary'),
+        api.get<{ trades: Trade[] }>('/api/trades?limit=30'),
+        api.get<RiskMetrics>('/api/risk/metrics'),
       ]);
 
-      if (summaryRes.status === 'fulfilled' && summaryRes.value.ok) {
-        setSummary(await summaryRes.value.json());
+      if (summaryRes.status === 'fulfilled') {
+        setSummary(summaryRes.value);
       }
-      if (tradesRes.status === 'fulfilled' && tradesRes.value.ok) {
-        const d = await tradesRes.value.json();
-        setTrades(d.trades ?? []);
+      if (tradesRes.status === 'fulfilled') {
+        setTrades(tradesRes.value.trades ?? []);
       }
-      if (riskRes.status === 'fulfilled' && riskRes.value.ok) {
-        setRisk(await riskRes.value.json());
+      if (riskRes.status === 'fulfilled') {
+        setRisk(riskRes.value);
       }
     } catch (err) {
       console.error('Failed to fetch performance data:', err);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_CONFIG } from '../config';
+import api from '../lib/api';
 
 interface Alert {
   id: string;
@@ -31,8 +31,7 @@ export default function AlertsPage() {
 
   const fetchAlerts = async () => {
     try {
-      const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/alerts`);
-      const data = await res.json();
+      const data = await api.get<{ alerts: Alert[] }>('/api/alerts');
       setAlerts(data.alerts || []);
     } catch (err) {
       console.error('Failed to fetch alerts:', err);
@@ -44,16 +43,10 @@ export default function AlertsPage() {
   const handleCreate = async () => {
     if (!form.price) return;
     try {
-      const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/alerts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      if (res.ok) {
-        setShowModal(false);
-        setForm({ symbol: 'BTCUSDT', condition: 'above', price: 0, message: '' });
-        fetchAlerts();
-      }
+      await api.post('/api/alerts', form);
+      setShowModal(false);
+      setForm({ symbol: 'BTCUSDT', condition: 'above', price: 0, message: '' });
+      fetchAlerts();
     } catch (err) {
       console.error('Failed to create alert:', err);
     }
@@ -62,7 +55,7 @@ export default function AlertsPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this alert?')) return;
     try {
-      await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/alerts/${id}`, { method: 'DELETE' });
+      await api.delete(`/api/alerts/${id}`);
       fetchAlerts();
     } catch (err) {
       console.error('Failed to delete alert:', err);

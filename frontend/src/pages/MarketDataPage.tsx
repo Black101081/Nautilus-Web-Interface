@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { API_CONFIG } from '../config';
+import api from '../lib/api';
 
 interface Instrument {
   symbol: string;
@@ -43,8 +43,7 @@ export default function MarketDataPage() {
 
   const fetchInstruments = async () => {
     try {
-      const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/market-data/instruments`);
-      const data = await res.json();
+      const data = await api.get<{ instruments: Instrument[] }>('/api/market-data/instruments');
       setInstruments(data.instruments || []);
       if (data.instruments?.length > 0) setSelected(data.instruments[0].symbol);
     } catch (err) {
@@ -56,8 +55,7 @@ export default function MarketDataPage() {
 
   const fetchQuote = async (symbol: string) => {
     try {
-      const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/market-data/${symbol}`);
-      const data = await res.json();
+      const data = await api.get<MarketQuote>(`/api/market-data/${symbol}`);
       setQuote(data);
     } catch (err) {
       console.error('Failed to fetch quote:', err);
