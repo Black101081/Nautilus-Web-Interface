@@ -199,8 +199,15 @@ async def get_backtest_results(strategy_id: str):
 
 # ─── Legacy / compatibility endpoints ───────────────────────────────────────
 
-# In-memory store for manual orders (created via UI)
+# In-memory stores
 _pending_orders: List[Dict[str, Any]] = []
+_risk_limits: Dict[str, Any] = {
+    "max_position_size": 100000,
+    "max_daily_loss": 5000,
+    "max_drawdown_pct": 15.0,
+    "max_leverage": 10,
+    "max_orders_per_day": 1000,
+}
 
 
 @app.get("/api/strategies")
@@ -358,13 +365,123 @@ async def list_components():
 @app.get("/api/risk/limits")
 async def get_risk_limits():
     """Return risk limit configuration"""
-    return {
-        "max_position_size": 100000,
-        "max_daily_loss": 5000,
-        "max_drawdown_pct": 15.0,
-        "max_leverage": 10,
-        "max_orders_per_day": 1000,
+    return _risk_limits.copy()
+
+
+@app.post("/api/risk/limits")
+async def update_risk_limits(limits: Dict[str, Any] = Body(...)):
+    """Update risk limits"""
+    _risk_limits.update(limits)
+    return {"success": True, "limits": _risk_limits.copy()}
+
+
+# ─── Alerts ──────────────────────────────────────────────────────────────────
+
+_alerts: List[Dict[str, Any]] = []
+
+
+@app.get("/api/alerts")
+async def list_alerts():
+    return {"alerts": _alerts, "count": len(_alerts)}
+
+
+@app.post("/api/alerts")
+async def create_alert(body: Dict[str, Any] = Body(...)):
+    import uuid
+    alert = {
+        "id": f"ALT-{uuid.uuid4().hex[:8].upper()}",
+        "symbol": body.get("symbol", "BTCUSDT"),
+        "condition": body.get("condition", "above"),
+        "price": body.get("price", 0),
+        "message": body.get("message", ""),
+        "status": "active",
+        "created_at": datetime.utcnow().isoformat(),
+        "triggered_at": None,
     }
+    _alerts.append(alert)
+    return {"success": True, "alert": alert}
+
+
+@app.delete("/api/alerts/{alert_id}")
+async def delete_alert(alert_id: str):
+    global _alerts
+    before = len(_alerts)
+    _alerts = [a for a in _alerts if a["id"] != alert_id]
+    if len(_alerts) < before:
+        return {"success": True}
+    raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
+
+
+# ─── Market Data ─────────────────────────────────────────────────────────────
+
+# Simulated base prices for demo market data
+_DEMO_PRICES = {
+    "EUR/USD": (1.0850, "SIM"), "GBP/USD": (1.2720, "SIM"),
+    "USD/JPY": (149.50, "SIM"), "AUD/USD": (0.6540, "SIM"),
+    "USD/CHF": (0.9015, "SIM"), "EUR/GBP": (0.8530, "SIM"),
+    "BTCUSDT": (67450.0, "BINANCE"), "ETHUSDT": (3520.0, "BINANCE"),
+    "BNBUSDT": (420.0, "BINANCE"), "SOLUSDT": (155.0, "BINANCE"),
+    "ADAUSDT": (0.485, "BINANCE"), "DOTUSDT": (8.90, "BINANCE"),
+}
+
+
+def _simulated_price(base: float) -> float:
+    """Return a price slightly varied around the base using current time."""
+    import math
+    t = datetime.utcnow().timestamp()
+    noise = math.sin(t * 0.3) * 0.0002 + math.cos(t * 0.7) * 0.0001
+    return round(base * (1 + noise), 5)
+
+
+@app.get("/api/market-data/instruments")
+async def market_data_instruments():
+    """Return instruments with live-simulated prices for MarketDataPage"""
+    instruments = []
+    for symbol, (base_price, exchange) in _DEMO_PRICES.items():
+        price = _simulated_price(base_price)
+        parts = symbol.replace("USDT", "/USDT").split("/")
+        instruments.append({
+            "symbol": symbol,
+            "base": parts[0] if len(parts) > 1 else symbol[:3],
+            "quote": parts[1] if len(parts) > 1 else "USD",
+            "exchange": exchange,
+            "price": price,
+            "change_24h": round((price - base_price) / base_price * 100, 3),
+        })
+    return {"instruments": instruments, "count": len(instruments)}
+
+
+@app.get("/api/market-data/{symbol}")
+async def market_data_quote(symbol: str):
+    """Return a simulated quote for a specific symbol"""
+    # Normalise: EURUSD → EUR/USD
+    normalised = symbol.replace("_", "/")
+    if normalised not in _DEMO_PRICES and symbol in _DEMO_PRICES:
+        normalised = symbol
+    base_price, exchange = _DEMO_PRICES.get(normalised, (100.0, "SIM"))
+    price = _simulated_price(base_price)
+    spread = price * 0.00015
+    return {
+        "symbol": normalised,
+        "price": price,
+        "bid": round(price - spread, 5),
+        "ask": round(price + spread, 5),
+        "volume_24h": round(base_price * 1_200_000 + _simulated_price(1_200_000), 2),
+        "change_24h": round((price - base_price) / base_price * 100, 3),
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+# ─── Positions – close action ────────────────────────────────────────────────
+
+_closed_position_ids: set = set()
+
+
+@app.post("/api/positions/{position_id}/close")
+async def close_position(position_id: str):
+    """Mark a position as closed (for UI purposes)"""
+    _closed_position_ids.add(position_id)
+    return {"success": True, "message": f"Position {position_id} closed"}
 
 
 @app.get("/api/risk/metrics")
