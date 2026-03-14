@@ -107,7 +107,7 @@ export default function OrdersPage() {
           </div>
           <div className="flex gap-4">
             <button
-              onClick={() => window.location.href = '/admin'}
+              onClick={() => window.location.href = '/trader'}
               className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
             >
               ← Back to Dashboard

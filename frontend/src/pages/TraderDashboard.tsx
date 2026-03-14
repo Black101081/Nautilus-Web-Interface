@@ -3,9 +3,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { useNotification } from "@/contexts/NotificationContext";
 import { nautilusService } from '@/services/nautilusService';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
 export default function TraderDashboard() {
   const { success, error: showError } = useNotification();
+  const { connected: wsConnected, lastMessage } = useWebSocket();
   const [engineInfo, setEngineInfo] = useState<any>(null);
   const [components, setComponents] = useState<any[]>([]);
   const [riskMetrics, setRiskMetrics] = useState<any>(null);
@@ -65,6 +67,10 @@ export default function TraderDashboard() {
                   </div>
                 </div>
               )}
+              <div className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full ${wsConnected ? 'bg-green-500/20 text-green-200' : 'bg-red-500/20 text-red-200'}`}>
+                <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
+                {wsConnected ? 'WS Live' : 'WS Off'}
+              </div>
               <Button onClick={() => window.location.href = '/'} variant="outline" className="bg-white text-blue-600">
                 ← Home
               </Button>
@@ -236,7 +242,7 @@ export default function TraderDashboard() {
               <p className="text-sm text-gray-600 mb-4">
                 Test strategies on historical data and analyze backtest results.
               </p>
-              <Button className="w-full bg-cyan-600 hover:bg-cyan-700" onClick={() => window.location.href = '/trader/backtest'}>
+              <Button className="w-full bg-cyan-600 hover:bg-cyan-700" onClick={() => window.location.href = '/trader/backtesting'}>
                 Run Backtest
               </Button>
             </CardContent>

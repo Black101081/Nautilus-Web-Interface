@@ -81,7 +81,7 @@ export default function PositionsPage() {
             <p className="text-gray-600">Monitor your open positions and P&L</p>
           </div>
           <button
-            onClick={() => window.location.href = '/admin'}
+            onClick={() => window.location.href = '/trader'}
             className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
           >
             ← Back to Dashboard
@@ -124,7 +124,7 @@ export default function PositionsPage() {
             <h3 className="text-2xl font-bold text-gray-900 mb-2">No Open Positions</h3>
             <p className="text-gray-600 mb-6">You don't have any open positions at the moment</p>
             <button
-              onClick={() => window.location.href = '/admin/orders'}
+              onClick={() => window.location.href = '/trader/orders'}
               className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
             >
               Create Order
