@@ -166,6 +166,11 @@ export const nautilusService = {
     }>('/api/risk/metrics');
   },
 
+  async getComponents() {
+    const result = await api.get<{ components: any[]; count: number }>('/api/components');
+    return (result as any).components ?? [];
+  },
+
   // Database operations
   async backupDatabase(dbType: string) {
     return api.post<{ message: string }>('/api/database/backup', { db_type: dbType });

@@ -166,17 +166,17 @@ export default function StrategiesPage() {
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>
                       <div className="text-xs text-gray-500">P&L</div>
-                      <div className={`font-bold ${strategy.performance.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        ${strategy.performance.total_pnl.toFixed(2)}
+                      <div className={`font-bold ${(strategy.performance?.total_pnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        ${(strategy.performance?.total_pnl ?? 0).toFixed(2)}
                       </div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-500">Trades</div>
-                      <div className="font-bold text-gray-900">{strategy.performance.total_trades}</div>
+                      <div className="font-bold text-gray-900">{strategy.performance?.total_trades ?? 0}</div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-500">Win Rate</div>
-                      <div className="font-bold text-blue-600">{(strategy.performance.win_rate * 100).toFixed(1)}%</div>
+                      <div className="font-bold text-blue-600">{((strategy.performance?.win_rate ?? 0) * 100).toFixed(1)}%</div>
                     </div>
                   </div>
                 </div>

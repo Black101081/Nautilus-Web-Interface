@@ -3,7 +3,7 @@ FastAPI Backend for Nautilus Trader Web Interface
 Exposes real Nautilus Trader functionality via REST API
 """
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
@@ -197,55 +197,174 @@ async def get_backtest_results(strategy_id: str):
     }
 
 
-# Legacy endpoints for compatibility with existing frontend
+# ─── Legacy / compatibility endpoints ───────────────────────────────────────
+
+# In-memory store for manual orders (created via UI)
+_pending_orders: List[Dict[str, Any]] = []
+
 
 @app.get("/api/strategies")
 async def legacy_list_strategies():
-    """Legacy endpoint for listing strategies"""
+    """List strategies – returns {strategies:[...]} format expected by StrategiesPage"""
     strategies = nautilus_system.get_all_strategies()
-    
-    # Transform to legacy format
-    legacy_strategies = []
+    result = []
     for strategy in strategies:
-        # Get backtest results if available
-        backtest_results = nautilus_system.get_backtest_results(strategy["id"])
-        
-        legacy_strategies.append({
+        br = nautilus_system.get_backtest_results(strategy["id"])
+        cfg = strategy.get("config")
+        result.append({
             "id": strategy["id"],
             "name": strategy["name"],
             "type": strategy["type"],
             "status": strategy["status"],
-            "instrument": strategy["config"].instrument_id if hasattr(strategy.get("config"), "instrument_id") else "EUR/USD.SIM",
-            "pnl": backtest_results.get("total_pnl", 0.0) if backtest_results else 0.0,
-            "trades": backtest_results.get("total_trades", 0) if backtest_results else 0,
-            "win_rate": backtest_results.get("win_rate", 0.0) if backtest_results else 0.0
+            "description": strategy.get("description", "SMA Crossover strategy"),
+            "instrument": getattr(cfg, "instrument_id", "EUR/USD.SIM") if cfg else "EUR/USD.SIM",
+            "performance": {
+                "total_pnl": br.get("total_pnl", 0.0) if br else 0.0,
+                "total_trades": br.get("total_trades", 0) if br else 0,
+                # win_rate is already 0-100; StrategiesPage expects 0-1 decimal
+                "win_rate": (br.get("win_rate", 0.0) / 100.0) if br else 0.0,
+            },
         })
-    
-    return legacy_strategies
+    return {"strategies": result, "count": len(result)}
+
+
+@app.post("/api/strategies")
+async def create_strategy_ui(request_body: Dict[str, Any] = Body(...)):
+    """Create strategy from StrategiesPage UI (uses SMA Crossover defaults)"""
+    config = {
+        "name": request_body.get("name", "New Strategy"),
+        "type": "sma_crossover",
+        "instrument_id": "EUR/USD.SIM",
+        "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+        "fast_period": 10,
+        "slow_period": 20,
+        "trade_size": "100000",
+    }
+    result = nautilus_system.create_strategy(config)
+    if result.get("success") and result.get("strategy_id"):
+        sid = result["strategy_id"]
+        if sid in nautilus_system.strategies:
+            nautilus_system.strategies[sid]["description"] = request_body.get("description", "")
+    return result
+
+
+@app.delete("/api/strategies/{strategy_id}")
+async def delete_strategy_ui(strategy_id: str):
+    """Delete a strategy"""
+    if strategy_id in nautilus_system.strategies:
+        del nautilus_system.strategies[strategy_id]
+        return {"success": True, "message": f"Strategy {strategy_id} deleted"}
+    raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+
+
+@app.post("/api/strategies/{strategy_id}/start")
+async def start_strategy_ui(strategy_id: str):
+    """Set strategy status to running"""
+    if strategy_id not in nautilus_system.strategies:
+        raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+    nautilus_system.strategies[strategy_id]["status"] = "running"
+    return {"success": True, "message": f"Strategy {strategy_id} started"}
+
+
+@app.post("/api/strategies/{strategy_id}/stop")
+async def stop_strategy_ui(strategy_id: str):
+    """Set strategy status to stopped"""
+    if strategy_id not in nautilus_system.strategies:
+        raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+    nautilus_system.strategies[strategy_id]["status"] = "stopped"
+    return {"success": True, "message": f"Strategy {strategy_id} stopped"}
 
 
 @app.get("/api/orders")
 async def legacy_list_orders():
-    """Legacy endpoint for listing orders"""
-    # Get orders from latest backtest
-    all_orders = []
-    for strategy_id, results in nautilus_system.backtest_results.items():
-        if "orders" in results:
-            all_orders.extend(results["orders"])
-    
-    return all_orders[:100]  # Limit to 100
+    """List orders – includes backtest orders and manually created pending orders"""
+    all_orders: List[Dict[str, Any]] = []
+    for results in nautilus_system.backtest_results.values():
+        for o in results.get("orders", []):
+            side_raw = str(o.get("side", ""))
+            side = "BUY" if "BUY" in side_raw else "SELL" if "SELL" in side_raw else side_raw
+            status_raw = str(o.get("status", ""))
+            status = "FILLED" if "FILLED" in status_raw else status_raw
+            all_orders.append({
+                "id": o.get("id", ""),
+                "instrument": o.get("instrument_id", ""),
+                "side": side,
+                "type": "MARKET",
+                "quantity": o.get("quantity", 0),
+                "price": o.get("avg_px"),
+                "status": status,
+                "filled_qty": o.get("filled_qty", 0),
+                "timestamp": datetime.utcnow().isoformat(),
+            })
+    # Append manually created orders
+    all_orders.extend(_pending_orders)
+    return {"orders": all_orders[:100], "count": len(all_orders)}
+
+
+@app.post("/api/orders")
+async def create_order_ui(order_body: Dict[str, Any] = Body(...)):
+    """Create a manual order (stored in memory)"""
+    import uuid
+    order = {
+        "id": f"ORD-{uuid.uuid4().hex[:8].upper()}",
+        "instrument": order_body.get("instrument", "EUR/USD.SIM"),
+        "side": order_body.get("side", "BUY"),
+        "type": order_body.get("type", "MARKET"),
+        "quantity": order_body.get("quantity", 0),
+        "price": order_body.get("price"),
+        "status": "PENDING",
+        "filled_qty": 0,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    _pending_orders.append(order)
+    return {"success": True, "order": order}
+
+
+@app.delete("/api/orders/{order_id}")
+async def cancel_order_ui(order_id: str):
+    """Cancel a pending order"""
+    for order in _pending_orders:
+        if order["id"] == order_id:
+            order["status"] = "CANCELLED"
+            return {"success": True, "message": f"Order {order_id} cancelled"}
+    raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
 
 
 @app.get("/api/positions")
 async def legacy_list_positions():
-    """Legacy endpoint for listing positions"""
-    # Get positions from latest backtest
-    all_positions = []
-    for strategy_id, results in nautilus_system.backtest_results.items():
-        if "positions" in results:
-            all_positions.extend(results["positions"])
-    
-    return all_positions[:100]  # Limit to 100
+    """List positions from all backtests"""
+    all_positions: List[Dict[str, Any]] = []
+    for results in nautilus_system.backtest_results.values():
+        all_positions.extend(results.get("positions", []))
+    return all_positions[:100]
+
+
+@app.get("/api/components")
+async def list_components():
+    """Engine component status for TraderDashboard"""
+    info = nautilus_system.get_system_info()
+    active = info["is_initialized"]
+    components = [
+        {"id": "data_engine", "name": "Data Engine", "type": "DataEngine", "status": "running" if active else "stopped"},
+        {"id": "exec_engine", "name": "Execution Engine", "type": "ExecutionEngine", "status": "running" if active else "stopped"},
+        {"id": "risk_engine", "name": "Risk Engine", "type": "RiskEngine", "status": "running" if active else "stopped"},
+        {"id": "portfolio", "name": "Portfolio", "type": "Portfolio", "status": "active" if active else "stopped"},
+        {"id": "cache", "name": "Cache", "type": "Cache", "status": "active"},
+        {"id": "message_bus", "name": "MessageBus", "type": "MessageBus", "status": "active"},
+    ]
+    return {"components": components, "count": len(components)}
+
+
+@app.get("/api/risk/limits")
+async def get_risk_limits():
+    """Return risk limit configuration"""
+    return {
+        "max_position_size": 100000,
+        "max_daily_loss": 5000,
+        "max_drawdown_pct": 15.0,
+        "max_leverage": 10,
+        "max_orders_per_day": 1000,
+    }
 
 
 @app.get("/api/risk/metrics")
