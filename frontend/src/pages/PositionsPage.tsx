@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_CONFIG } from '../config';
+import api from '../lib/api';
 
 interface Position {
   id: string;
@@ -26,12 +26,9 @@ export default function PositionsPage() {
 
   const fetchPositions = async () => {
     try {
-      const response = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/positions`);
-      const data = await response.json();
+      const data = await api.get<{ positions: Position[] }>('/api/positions');
       setPositions(data.positions || []);
-      
-      // Calculate total P&L
-      const total = (data.positions || []).reduce((sum: number, pos: Position) => 
+      const total = (data.positions || []).reduce((sum: number, pos: Position) =>
         sum + pos.unrealized_pnl + pos.realized_pnl, 0
       );
       setTotalPnL(total);
@@ -44,11 +41,8 @@ export default function PositionsPage() {
 
   const handleClosePosition = async (positionId: string) => {
     if (!confirm('Close this position?')) return;
-    
     try {
-      await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/positions/${positionId}/close`, {
-        method: 'POST'
-      });
+      await api.post(`/api/positions/${positionId}/close`);
       fetchPositions();
     } catch (error) {
       console.error('Failed to close position:', error);
@@ -81,7 +75,7 @@ export default function PositionsPage() {
             <p className="text-gray-600">Monitor your open positions and P&L</p>
           </div>
           <button
-            onClick={() => window.location.href = '/admin'}
+            onClick={() => window.location.href = '/trader'}
             className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
           >
             ← Back to Dashboard
@@ -124,7 +118,7 @@ export default function PositionsPage() {
             <h3 className="text-2xl font-bold text-gray-900 mb-2">No Open Positions</h3>
             <p className="text-gray-600 mb-6">You don't have any open positions at the moment</p>
             <button
-              onClick={() => window.location.href = '/admin/orders'}
+              onClick={() => window.location.href = '/trader/orders'}
               className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
             >
               Create Order

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_CONFIG } from '../config';
+import api from '../lib/api';
 
 interface RiskMetrics {
   total_exposure: number;
@@ -37,14 +37,10 @@ export default function RiskPage() {
 
   const fetchData = async () => {
     try {
-      const [metricsRes, limitsRes] = await Promise.all([
-        fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/risk/metrics`),
-        fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/risk/limits`)
+      const [metricsData, limitsData] = await Promise.all([
+        api.get<RiskMetrics>('/api/risk/metrics'),
+        api.get<RiskLimits>('/api/risk/limits'),
       ]);
-      
-      const metricsData = await metricsRes.json();
-      const limitsData = await limitsRes.json();
-      
       setMetrics(metricsData);
       setLimits(limitsData);
       setNewLimits(limitsData);
@@ -57,11 +53,7 @@ export default function RiskPage() {
 
   const handleUpdateLimits = async () => {
     try {
-      await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/risk/limits`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLimits)
-      });
+      await api.post('/api/risk/limits', newLimits);
       setEditingLimits(false);
       fetchData();
     } catch (error) {

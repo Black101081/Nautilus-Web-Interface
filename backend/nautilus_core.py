@@ -7,7 +7,7 @@ Uses low-level BacktestEngine API for direct control
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
@@ -129,7 +129,7 @@ class NautilusTradingSystem:
                     "type": strategy_type,
                     "config": strategy_config,
                     "status": "created",
-                    "created_at": datetime.utcnow().isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat()
                 }
                 
                 return {
@@ -282,6 +282,10 @@ class NautilusTradingSystem:
             
             win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
             
+            equity_curve = self._build_equity_curve(positions, starting_balance, start_date)
+            max_drawdown = self._calc_max_drawdown(equity_curve)
+            sharpe_ratio = self._calc_sharpe(equity_curve)
+
             # Store results
             backtest_result = {
                 "strategy_id": strategy_id,
@@ -294,15 +298,18 @@ class NautilusTradingSystem:
                 "winning_trades": winning_trades,
                 "losing_trades": losing_trades,
                 "win_rate": win_rate,
+                "max_drawdown": max_drawdown,
+                "sharpe_ratio": sharpe_ratio,
                 "total_orders": len(orders),
-                "completed_at": datetime.utcnow().isoformat(),
-                "orders": [self._order_to_dict(o) for o in orders[:100]],  # Limit to 100 for performance
-                "positions": [self._position_to_dict(p) for p in positions[:100]],
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "equity_curve": equity_curve,
+                "orders": [self._order_to_dict(o) for o in orders[:200]],
+                "positions": [self._position_to_dict(p) for p in positions[:200]],
             }
             
             self.backtest_results[strategy_id] = backtest_result
             self.strategies[strategy_id]["status"] = "backtested"
-            self.strategies[strategy_id]["last_backtest"] = datetime.utcnow().isoformat()
+            self.strategies[strategy_id]["last_backtest"] = datetime.now(timezone.utc).isoformat()
             
             print(f"📈 Total P&L: ${total_pnl:,.2f}")
             print(f"📊 Total Trades: {total_trades}")
@@ -342,6 +349,199 @@ class NautilusTradingSystem:
         """Get a specific strategy."""
         return self.strategies.get(strategy_id)
     
+    def _build_equity_curve(self, positions, starting_balance: float, start_date: str) -> List[Dict]:
+        """Build equity curve time-series from closed positions."""
+        equity_curve = [{"time": f"{start_date}T00:00:00", "equity": starting_balance}]
+        running = starting_balance
+        closed = [p for p in positions if p.is_closed]
+        for pos in sorted(closed, key=lambda p: p.ts_closed or 0):
+            pnl = float(pos.realized_pnl.as_double()) if pos.realized_pnl else 0.0
+            running += pnl
+            ts_secs = (pos.ts_closed or 0) / 1e9
+            try:
+                time_str = datetime.utcfromtimestamp(ts_secs).isoformat()
+            except Exception:
+                time_str = datetime.now(timezone.utc).isoformat()
+            equity_curve.append({"time": time_str, "equity": round(running, 2)})
+        return equity_curve
+
+    def _calc_max_drawdown(self, equity_curve: List[Dict]) -> float:
+        """Calculate maximum drawdown percentage from equity curve."""
+        max_dd = 0.0
+        peak = 0.0
+        for point in equity_curve:
+            eq = point["equity"]
+            if eq > peak:
+                peak = eq
+            if peak > 0:
+                dd = (peak - eq) / peak * 100
+                if dd > max_dd:
+                    max_dd = dd
+        return round(max_dd, 2)
+
+    def _calc_sharpe(self, equity_curve: List[Dict]) -> float:
+        """Approximate annualised Sharpe ratio from equity curve returns."""
+        import statistics
+        if len(equity_curve) < 3:
+            return 0.0
+        returns = []
+        for i in range(1, len(equity_curve)):
+            prev = equity_curve[i - 1]["equity"]
+            curr = equity_curve[i]["equity"]
+            if prev > 0:
+                returns.append((curr - prev) / prev)
+        if len(returns) < 2:
+            return 0.0
+        try:
+            mean_r = statistics.mean(returns)
+            std_r = statistics.stdev(returns)
+            return round((mean_r / std_r) * (252 ** 0.5), 3) if std_r > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    def run_demo_backtest(
+        self,
+        fast_period: int = 10,
+        slow_period: int = 20,
+        starting_balance: float = 100000.0,
+        num_bars: int = 500,
+    ) -> Dict[str, Any]:
+        """
+        Run a demo backtest using synthetic price data.
+        Works without a real data catalog – uses TestInstrumentProvider.
+        """
+        import random
+        try:
+            from nautilus_trader.test_kit.providers import TestInstrumentProvider
+            from nautilus_trader.model.data import Bar, BarType
+            from nautilus_trader.model.objects import Price, Quantity
+
+            engine_config = BacktestEngineConfig(
+                trader_id=TraderId("DEMO-001"),
+                logging=LoggingConfig(log_level="WARNING"),
+            )
+            engine = BacktestEngine(config=engine_config)
+
+            VENUE = Venue("SIM")
+            engine.add_venue(
+                venue=VENUE,
+                oms_type=OmsType.HEDGING,
+                account_type=AccountType.MARGIN,
+                base_currency=USD,
+                starting_balances=[Money(starting_balance, USD)],
+            )
+
+            # Use a well-known test instrument
+            try:
+                instrument = TestInstrumentProvider.default_fx_ccy("EUR/USD", venue=VENUE)
+            except TypeError:
+                instrument = TestInstrumentProvider.default_fx_ccy("EUR/USD")
+
+            engine.add_instrument(instrument)
+
+            # Generate synthetic bar data (geometric brownian motion with slight upward drift)
+            bar_type = BarType.from_str(f"{instrument.id}-1-MINUTE-BID-INTERNAL")
+            bars = []
+            current_price = 1.10000
+            start_ts = 1_609_459_200_000_000_000  # 2021-01-01 00:00:00 UTC (nanoseconds)
+            bar_ns = 60_000_000_000  # 1 minute in nanoseconds
+
+            random.seed(42)
+            for i in range(num_bars):
+                change_pct = random.gauss(0.00003, 0.00030)
+                open_p = current_price
+                close_p = max(0.5, current_price * (1 + change_pct))
+                high_p = max(open_p, close_p) * (1 + abs(random.gauss(0, 0.00008)))
+                low_p = min(open_p, close_p) * (1 - abs(random.gauss(0, 0.00008)))
+                ts = start_ts + i * bar_ns
+
+                bar = Bar(
+                    bar_type=bar_type,
+                    open=Price.from_str(f"{open_p:.5f}"),
+                    high=Price.from_str(f"{high_p:.5f}"),
+                    low=Price.from_str(f"{low_p:.5f}"),
+                    close=Price.from_str(f"{close_p:.5f}"),
+                    volume=Quantity.from_str("1000000"),
+                    ts_event=ts,
+                    ts_init=ts,
+                )
+                bars.append(bar)
+                current_price = close_p
+
+            engine.add_data(bars)
+
+            strategy_config = SMACrossoverConfig(
+                strategy_id="demo_sma",
+                instrument_id=str(instrument.id),
+                bar_type=str(bar_type),
+                fast_period=fast_period,
+                slow_period=slow_period,
+                trade_size=Decimal("100000"),
+            )
+            strategy = SMACrossoverStrategy(config=strategy_config)
+            engine.add_strategy(strategy=strategy)
+
+            print(f"⚙️  Running demo backtest ({num_bars} bars, fast={fast_period}, slow={slow_period})…")
+            engine.run()
+            print("✅ Demo backtest complete")
+
+            accounts = list(engine.cache.accounts())
+            account = accounts[0] if accounts else None
+            orders = list(engine.cache.orders())
+            positions = list(engine.cache.positions())
+
+            final_balance = float(account.balance_total(USD).as_double()) if account else starting_balance
+            total_pnl = final_balance - starting_balance
+
+            closed_pos = [p for p in positions if p.is_closed]
+            winning = sum(1 for p in closed_pos if p.realized_pnl and float(p.realized_pnl.as_double()) > 0)
+            losing = sum(1 for p in closed_pos if p.realized_pnl and float(p.realized_pnl.as_double()) < 0)
+            total_trades = len(closed_pos)
+            win_rate = (winning / total_trades * 100) if total_trades > 0 else 0.0
+
+            equity_curve = self._build_equity_curve(positions, starting_balance, "2021-01-01")
+            max_drawdown = self._calc_max_drawdown(equity_curve)
+            sharpe_ratio = self._calc_sharpe(equity_curve)
+
+            result = {
+                "strategy_id": "demo",
+                "strategy_name": f"SMA Crossover (fast={fast_period}, slow={slow_period})",
+                "start_date": "2021-01-01",
+                "end_date": "2021-01-08",
+                "starting_balance": starting_balance,
+                "ending_balance": round(final_balance, 2),
+                "total_pnl": round(total_pnl, 2),
+                "total_trades": total_trades,
+                "winning_trades": winning,
+                "losing_trades": losing,
+                "win_rate": round(win_rate, 2),
+                "max_drawdown": max_drawdown,
+                "sharpe_ratio": sharpe_ratio,
+                "total_orders": len(orders),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "equity_curve": equity_curve,
+                "orders": [self._order_to_dict(o) for o in orders[:200]],
+                "positions": [self._position_to_dict(p) for p in positions[:200]],
+                "fast_period": fast_period,
+                "slow_period": slow_period,
+                "num_bars": num_bars,
+            }
+
+            engine.dispose()
+            return {"success": True, "result": result}
+
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"❌ Demo backtest failed: {e}")
+            print(error_trace)
+            return {
+                "success": False,
+                "message": str(e),
+                "error": str(e),
+                "trace": error_trace,
+            }
+
     def _order_to_dict(self, order) -> Dict[str, Any]:
         """Convert Nautilus Order to dictionary."""
         return {
@@ -366,7 +566,7 @@ class NautilusTradingSystem:
             "avg_px_open": float(position.avg_px_open),
             "avg_px_close": float(position.avg_px_close) if position.avg_px_close else None,
             "realized_pnl": float(position.realized_pnl.as_double()) if position.realized_pnl else 0.0,
-            "unrealized_pnl": float(position.unrealized_pnl(position.last_px).as_double()) if not position.is_closed else 0.0,
+            "unrealized_pnl": 0.0,
             "is_open": position.is_open,
             "is_closed": position.is_closed,
             "ts_opened": position.ts_opened,

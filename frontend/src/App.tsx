@@ -1,6 +1,6 @@
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { loadApiConfig } from "./config";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -29,12 +29,13 @@ import MarketDataPage from "./pages/MarketDataPage";
 import PerformancePage from "./pages/PerformancePage";
 import AlertsPage from "./pages/AlertsPage";
 import BacktestingPage from "./pages/BacktestingPage";
+import LoginPage from "./pages/LoginPage";
 
 function Router() {
   useEffect(() => {
     loadApiConfig();
   }, []);
-  
+
   return (
     <Switch>
       <Route path="/" component={Home} />
@@ -65,6 +66,38 @@ function Router() {
 }
 
 function App() {
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    // Check if we've already authenticated this session
+    const stored = sessionStorage.getItem('nautilus_auth');
+    if (stored === 'true') {
+      setAuthenticated(true);
+    } else {
+      setAuthenticated(false);
+    }
+  }, []);
+
+  const handleLogin = (apiKey: string) => {
+    if (apiKey) {
+      localStorage.setItem('nautilus_api_key', apiKey);
+    }
+    sessionStorage.setItem('nautilus_auth', 'true');
+    setAuthenticated(true);
+  };
+
+  // Still loading auth state
+  if (authenticated === null) return null;
+
+  // Show login page if not authenticated
+  if (!authenticated) {
+    return (
+      <ErrorBoundary>
+        <LoginPage onLogin={handleLogin} />
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">

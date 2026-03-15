@@ -1,31 +1,82 @@
+import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNotification } from "@/contexts/NotificationContext";
-import { useState } from "react";
+import api from "@/lib/api";
+
+interface Component {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+}
+
+const STATUS_STYLE: Record<string, string> = {
+  running: "bg-green-100 text-green-700",
+  active:  "bg-green-100 text-green-700",
+  stopped: "bg-red-100 text-red-700",
+  error:   "bg-red-100 text-red-700",
+  paused:  "bg-yellow-100 text-yellow-700",
+};
 
 export default function ComponentsPage() {
-  const { success, info } = useNotification();
-  const [components] = useState([
-    { id: 1, name: 'DataEngine', status: 'running', type: 'Engine' },
-    { id: 2, name: 'ExecutionEngine', status: 'running', type: 'Engine' },
-    { id: 3, name: 'RiskEngine', status: 'running', type: 'Engine' },
-    { id: 4, name: 'Portfolio', status: 'running', type: 'Component' },
-    { id: 5, name: 'Cache', status: 'running', type: 'Component' },
-    { id: 6, name: 'MessageBus', status: 'running', type: 'Component' },
-  ]);
+  const { success, info, error: notifyError } = useNotification();
+  const [components, setComponents] = useState<Component[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState<string | null>(null);
 
-  const handleAction = (component: string, action: string) => {
-    info(`${action} ${component}...`);
-    setTimeout(() => success(`${component} ${action.toLowerCase()} successfully!`), 1000);
+  const fetchComponents = useCallback(async () => {
+    try {
+      const data = await api.get<{ components: Component[] }>('/api/components');
+      setComponents(data.components ?? []);
+    } catch {
+      notifyError("Failed to load components");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchComponents();
+    const interval = setInterval(fetchComponents, 5000);
+    return () => clearInterval(interval);
+  }, [fetchComponents]);
+
+  const callAction = async (action: string, componentId?: string) => {
+    const key = componentId ?? "all";
+    setActing(key + action);
+    const label = componentId ?? "All components";
+    info(`${action} ${label}…`);
+    try {
+      const endpoint = action === "Restart"
+        ? "/api/component/restart"
+        : action === "Stop"
+        ? "/api/component/stop"
+        : "/api/component/start";
+
+      await api.post(endpoint, { component: label });
+      success(`${label} ${action.toLowerCase()}ed successfully`);
+      await fetchComponents();
+    } catch {
+      notifyError(`Failed to ${action.toLowerCase()} ${label}`);
+    } finally {
+      setActing(null);
+    }
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+          <div>
             <h1 className="text-2xl font-bold">Components Management</h1>
-            <Button variant="outline" onClick={() => window.location.href = '/admin'}>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {loading ? "Loading…" : `${components.length} components · auto-refresh every 5s`}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={fetchComponents}>⟳ Refresh</Button>
+            <Button variant="outline" onClick={() => window.location.href = "/admin"}>
               ← Back to Dashboard
             </Button>
           </div>
@@ -37,53 +88,73 @@ export default function ComponentsPage() {
         <Card className="mb-6">
           <CardHeader>
             <CardTitle>Bulk Actions</CardTitle>
+            <CardDescription>Apply an action to all components at once</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex gap-4">
-              <Button onClick={() => handleAction('All components', 'Start')}>
+            <div className="flex gap-3">
+              <Button onClick={() => callAction("Start")} disabled={acting !== null}>
                 Start All
               </Button>
-              <Button variant="outline" onClick={() => handleAction('All components', 'Stop')}>
+              <Button variant="outline" onClick={() => callAction("Stop")} disabled={acting !== null}>
                 Stop All
               </Button>
-              <Button variant="outline" onClick={() => handleAction('All components', 'Restart')}>
+              <Button variant="outline" onClick={() => callAction("Restart")} disabled={acting !== null}>
                 Restart All
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        {/* Components Grid */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {components.map(comp => (
-            <Card key={comp.id}>
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  {comp.name}
-                  <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">
-                    {comp.status}
-                  </span>
-                </CardTitle>
-                <CardDescription>{comp.type}</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="grid grid-cols-3 gap-2">
-                  <Button size="sm" variant="outline" onClick={() => handleAction(comp.name, 'Stop')}>
-                    Stop
-                  </Button>
-                  <Button size="sm" onClick={() => handleAction(comp.name, 'Restart')}>
-                    Restart
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => info(`Opening ${comp.name} config...`)}>
-                    Config
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        {loading ? (
+          <div className="text-center py-16 text-gray-500 animate-pulse">Loading components…</div>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {components.map(comp => {
+              const statusStyle = STATUS_STYLE[comp.status] ?? "bg-gray-100 text-gray-600";
+              const isActing = acting === comp.id + "Restart" || acting === comp.id + "Stop";
+              return (
+                <Card key={comp.id}>
+                  <CardHeader>
+                    <CardTitle className="flex items-center justify-between text-base">
+                      {comp.name}
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusStyle}`}>
+                        {comp.status}
+                      </span>
+                    </CardTitle>
+                    <CardDescription>{comp.type}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-3 gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isActing}
+                        onClick={() => callAction("Stop", comp.id)}
+                      >
+                        Stop
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={isActing}
+                        onClick={() => callAction("Restart", comp.id)}
+                      >
+                        {isActing ? "…" : "Restart"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => info(`Opening ${comp.name} config…`)}
+                      >
+                        Config
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </main>
     </div>
   );
 }
-

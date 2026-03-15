@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_CONFIG } from '../config';
+import api from '../lib/api';
 
 interface Order {
   id: string;
@@ -33,8 +33,7 @@ export default function OrdersPage() {
 
   const fetchOrders = async () => {
     try {
-      const response = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/orders`);
-      const data = await response.json();
+      const data = await api.get<{ orders: Order[] }>('/api/orders');
       setOrders(data.orders || []);
     } catch (error) {
       console.error('Failed to fetch orders:', error);
@@ -45,17 +44,10 @@ export default function OrdersPage() {
 
   const handleCreateOrder = async () => {
     try {
-      const response = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/orders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newOrder)
-      });
-      
-      if (response.ok) {
-        setShowNewOrderModal(false);
-        setNewOrder({ instrument: 'BTCUSDT', side: 'BUY', type: 'LIMIT', quantity: 0.001, price: 0 });
-        fetchOrders();
-      }
+      await api.post('/api/orders', newOrder);
+      setShowNewOrderModal(false);
+      setNewOrder({ instrument: 'BTCUSDT', side: 'BUY', type: 'LIMIT', quantity: 0.001, price: 0 });
+      fetchOrders();
     } catch (error) {
       console.error('Failed to create order:', error);
     }
@@ -63,11 +55,8 @@ export default function OrdersPage() {
 
   const handleCancelOrder = async (orderId: string) => {
     if (!confirm('Cancel this order?')) return;
-    
     try {
-      await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/orders/${orderId}`, {
-        method: 'DELETE'
-      });
+      await api.delete(`/api/orders/${orderId}`);
       fetchOrders();
     } catch (error) {
       console.error('Failed to cancel order:', error);
@@ -107,7 +96,7 @@ export default function OrdersPage() {
           </div>
           <div className="flex gap-4">
             <button
-              onClick={() => window.location.href = '/admin'}
+              onClick={() => window.location.href = '/trader'}
               className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
             >
               ← Back to Dashboard

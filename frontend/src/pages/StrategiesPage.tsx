@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_CONFIG } from '../config';
+import api from '../lib/api';
 
 interface Strategy {
   id: string;
@@ -32,8 +32,7 @@ export default function StrategiesPage() {
 
   const fetchStrategies = async () => {
     try {
-      const response = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/strategies`);
-      const data = await response.json();
+      const data = await api.get<{ strategies: Strategy[] }>('/api/strategies');
       setStrategies(data.strategies || []);
     } catch (error) {
       console.error('Failed to fetch strategies:', error);
@@ -44,17 +43,10 @@ export default function StrategiesPage() {
 
   const handleAddStrategy = async () => {
     try {
-      const response = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/strategies`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newStrategy)
-      });
-      
-      if (response.ok) {
-        setShowAddModal(false);
-        setNewStrategy({ name: '', type: 'momentum', description: '', config: {} });
-        fetchStrategies();
-      }
+      await api.post('/api/strategies', newStrategy);
+      setShowAddModal(false);
+      setNewStrategy({ name: '', type: 'momentum', description: '', config: {} });
+      fetchStrategies();
     } catch (error) {
       console.error('Failed to add strategy:', error);
     }
@@ -62,9 +54,7 @@ export default function StrategiesPage() {
 
   const handleStartStrategy = async (strategyId: string) => {
     try {
-      await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/strategies/${strategyId}/start`, {
-        method: 'POST'
-      });
+      await api.post(`/api/strategies/${strategyId}/start`);
       fetchStrategies();
     } catch (error) {
       console.error('Failed to start strategy:', error);
@@ -73,9 +63,7 @@ export default function StrategiesPage() {
 
   const handleStopStrategy = async (strategyId: string) => {
     try {
-      await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/strategies/${strategyId}/stop`, {
-        method: 'POST'
-      });
+      await api.post(`/api/strategies/${strategyId}/stop`);
       fetchStrategies();
     } catch (error) {
       console.error('Failed to stop strategy:', error);
@@ -84,11 +72,8 @@ export default function StrategiesPage() {
 
   const handleDeleteStrategy = async (strategyId: string) => {
     if (!confirm('Are you sure you want to delete this strategy?')) return;
-    
     try {
-      await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/strategies/${strategyId}`, {
-        method: 'DELETE'
-      });
+      await api.delete(`/api/strategies/${strategyId}`);
       fetchStrategies();
     } catch (error) {
       console.error('Failed to delete strategy:', error);
@@ -114,7 +99,7 @@ export default function StrategiesPage() {
           </div>
           <div className="flex gap-4">
             <button
-              onClick={() => window.location.href = '/admin'}
+              onClick={() => window.location.href = '/trader'}
               className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
             >
               ← Back to Dashboard
@@ -166,17 +151,17 @@ export default function StrategiesPage() {
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>
                       <div className="text-xs text-gray-500">P&L</div>
-                      <div className={`font-bold ${strategy.performance.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        ${strategy.performance.total_pnl.toFixed(2)}
+                      <div className={`font-bold ${(strategy.performance?.total_pnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        ${(strategy.performance?.total_pnl ?? 0).toFixed(2)}
                       </div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-500">Trades</div>
-                      <div className="font-bold text-gray-900">{strategy.performance.total_trades}</div>
+                      <div className="font-bold text-gray-900">{strategy.performance?.total_trades ?? 0}</div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-500">Win Rate</div>
-                      <div className="font-bold text-blue-600">{(strategy.performance.win_rate * 100).toFixed(1)}%</div>
+                      <div className="font-bold text-blue-600">{((strategy.performance?.win_rate ?? 0) * 100).toFixed(1)}%</div>
                     </div>
                   </div>
                 </div>
