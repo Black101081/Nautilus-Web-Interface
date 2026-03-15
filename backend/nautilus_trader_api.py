@@ -3,21 +3,33 @@ Nautilus Trader API
 FastAPI backend for Nautilus Trader Web Interface with real Nautilus integration
 """
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import os
 import asyncio
-from datetime import datetime
+import random
+import uuid
+from datetime import datetime, timezone
 
 # Import Nautilus integration
 from nautilus_integration import nautilus_manager
 from nautilus_core import NautilusTradingSystem
-from auth import ApiKeyMiddleware
+from auth import ApiKeyMiddleware, API_KEY
 
-# Separate system instance for backtesting (doesn't require a data catalog)
-_trading_system = NautilusTradingSystem()
+# Lazy initialization — avoids crash at import time if NautilusTradingSystem
+# has missing dependencies (nautilus_trader not installed, etc.)
+_trading_system: Optional[NautilusTradingSystem] = None
+
+def _get_trading_system() -> NautilusTradingSystem:
+    global _trading_system
+    if _trading_system is None:
+        try:
+            _trading_system = NautilusTradingSystem()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Trading system unavailable: {exc}")
+    return _trading_system
 
 app = FastAPI(
     title="Nautilus Trader API",
@@ -26,8 +38,12 @@ app = FastAPI(
 )
 
 # CORS configuration - set CORS_ORIGINS env var in production
+# Default to localhost dev origins only; never fall back to ["*"]
 _cors_env = os.getenv("CORS_ORIGINS", "")
-CORS_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()] or ["*"]
+CORS_ORIGINS = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    or ["http://localhost:5173", "http://localhost:3000"]
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -79,7 +95,7 @@ class BacktestRequest(BaseModel):
 async def health_check():
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "nautilus-trader-api",
         "version": "2.0.0"
     }
@@ -278,7 +294,6 @@ async def get_market_instruments():
 @app.get("/api/market-data/{symbol}")
 async def get_market_data(symbol: str):
     """Get market data for a symbol"""
-    import random
     base_prices = {"BTCUSDT": 65420.0, "ETHUSDT": 3240.0, "BNBUSDT": 580.0}
     price = base_prices.get(symbol.upper(), 100.0)
 
@@ -289,7 +304,7 @@ async def get_market_data(symbol: str):
         "ask": price * 1.0002,
         "volume_24h": random.uniform(1000000, 50000000),
         "change_24h": random.uniform(-5, 5),
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 # ---------- Performance ----------
@@ -323,7 +338,7 @@ async def get_performance_summary():
 
 @app.post("/api/nautilus/demo-backtest")
 async def run_demo_backtest(request: DemoBacktestRequest):
-    result = _trading_system.run_demo_backtest(
+    result = _get_trading_system().run_demo_backtest(
         fast_period=request.fast_period,
         slow_period=request.slow_period,
         starting_balance=request.starting_balance,
@@ -335,7 +350,7 @@ async def run_demo_backtest(request: DemoBacktestRequest):
 
 @app.post("/api/nautilus/backtest")
 async def run_backtest(request: BacktestRequest):
-    result = _trading_system.run_backtest(
+    result = _get_trading_system().run_backtest(
         strategy_id=request.strategy_id,
         start_date=request.start_date,
         end_date=request.end_date,
@@ -361,7 +376,7 @@ async def get_alerts():
 
 @app.post("/api/alerts")
 async def create_alert(alert: AlertRequest):
-    alert_id = f"ALERT-{len(_alerts) + 1:04d}"
+    alert_id = f"ALERT-{uuid.uuid4().hex[:8].upper()}"
     new_alert = {
         "id": alert_id,
         "symbol": alert.symbol,
@@ -369,7 +384,7 @@ async def create_alert(alert: AlertRequest):
         "price": alert.price,
         "message": alert.message or f"{alert.symbol} {alert.condition} {alert.price}",
         "status": "active",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "triggered_at": None,
     }
     _alerts.append(new_alert)
@@ -387,7 +402,15 @@ async def delete_alert(alert_id: str):
 # ---------- WebSocket ----------
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: Optional[str] = Query(default=None),
+):
+    # Authenticate when API_KEY is configured (same as HTTP middleware)
+    if API_KEY and token != API_KEY:
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
+
     await websocket.accept()
     try:
         while True:
@@ -400,7 +423,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             await websocket.send_json({
                 "type": "update",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "data": {
                     "engine": engine_info,
                     "strategies_count": len(strategies),

@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 API_KEY = os.getenv("API_KEY", "")
 
 # Paths that are always public (no auth required)
-PUBLIC_PATHS = {"/api/health", "/ws", "/docs", "/openapi.json", "/redoc"}
+PUBLIC_PATHS = {"/api/health", "/docs", "/openapi.json", "/redoc"}
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
