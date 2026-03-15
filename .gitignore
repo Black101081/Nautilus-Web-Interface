@@ -74,4 +74,5 @@ dist/
 *.sqlite
 backups/
 cache/
+backend/data/
 

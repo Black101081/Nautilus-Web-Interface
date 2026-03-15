@@ -19,7 +19,6 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import os
 import asyncio
-import random
 import uuid
 from datetime import datetime, timezone
 
@@ -27,6 +26,8 @@ from datetime import datetime, timezone
 from nautilus_integration import nautilus_manager
 from nautilus_core import NautilusTradingSystem
 from auth import ApiKeyMiddleware, API_KEY
+import market_data_service
+import alerts_db
 
 # Lazy initialization — avoids crash at import time if NautilusTradingSystem
 # has missing dependencies (nautilus_trader not installed, etc.)
@@ -286,36 +287,18 @@ async def update_risk_limits(limits: RiskLimitsRequest):
     data = {k: v for k, v in limits.model_dump().items() if v is not None}
     return nautilus_manager.update_risk_limits(data)
 
-# ---------- Market Data (simulated) ----------
+# ---------- Market Data ----------
 
 @app.get("/api/market-data/instruments")
 async def get_market_instruments():
-    """Get list of supported instruments"""
-    instruments = [
-        {"symbol": "BTCUSDT", "base": "BTC", "quote": "USDT", "exchange": "BINANCE", "price": 65420.0, "change_24h": 2.3},
-        {"symbol": "ETHUSDT", "base": "ETH", "quote": "USDT", "exchange": "BINANCE", "price": 3240.0, "change_24h": -0.8},
-        {"symbol": "BNBUSDT", "base": "BNB", "quote": "USDT", "exchange": "BINANCE", "price": 580.0, "change_24h": 1.1},
-        {"symbol": "SOLUSDT", "base": "SOL", "quote": "USDT", "exchange": "BINANCE", "price": 175.0, "change_24h": 4.2},
-        {"symbol": "ADAUSDT", "base": "ADA", "quote": "USDT", "exchange": "BINANCE", "price": 0.485, "change_24h": -1.5},
-        {"symbol": "DOTUSDT", "base": "DOT", "quote": "USDT", "exchange": "BINANCE", "price": 8.2, "change_24h": 0.7},
-    ]
+    """Get list of supported instruments with live Binance prices."""
+    instruments = await market_data_service.get_instruments()
     return {"instruments": instruments}
 
 @app.get("/api/market-data/{symbol}")
 async def get_market_data(symbol: str):
-    """Get market data for a symbol"""
-    base_prices = {"BTCUSDT": 65420.0, "ETHUSDT": 3240.0, "BNBUSDT": 580.0}
-    price = base_prices.get(symbol.upper(), 100.0)
-
-    return {
-        "symbol": symbol.upper(),
-        "price": price * (1 + random.uniform(-0.001, 0.001)),
-        "bid": price * 0.9998,
-        "ask": price * 1.0002,
-        "volume_24h": random.uniform(1000000, 50000000),
-        "change_24h": random.uniform(-5, 5),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    """Get live market data for a symbol from Binance."""
+    return await market_data_service.get_symbol_data(symbol)
 
 # ---------- Performance ----------
 
@@ -372,17 +355,20 @@ async def run_backtest(request: BacktestRequest):
 
 # ---------- Alerts ----------
 
-_alerts: List[Dict[str, Any]] = []
-
 class AlertRequest(BaseModel):
     symbol: str
     condition: str  # above, below
     price: float
     message: Optional[str] = None
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialise persistent storage on server start."""
+    await alerts_db.init_db()
+
 @app.get("/api/alerts")
 async def get_alerts():
-    return {"alerts": _alerts}
+    return {"alerts": await alerts_db.get_all_alerts()}
 
 @app.post("/api/alerts")
 async def create_alert(alert: AlertRequest):
@@ -397,15 +383,13 @@ async def create_alert(alert: AlertRequest):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "triggered_at": None,
     }
-    _alerts.append(new_alert)
-    return {"success": True, "alert": new_alert}
+    saved = await alerts_db.create_alert(new_alert)
+    return {"success": True, "alert": saved}
 
 @app.delete("/api/alerts/{alert_id}")
 async def delete_alert(alert_id: str):
-    global _alerts
-    before = len(_alerts)
-    _alerts = [a for a in _alerts if a["id"] != alert_id]
-    if len(_alerts) == before:
+    deleted = await alerts_db.delete_alert(alert_id)
+    if not deleted:
         raise HTTPException(status_code=404, detail="Alert not found")
     return {"success": True, "message": f"Alert {alert_id} deleted"}
 
