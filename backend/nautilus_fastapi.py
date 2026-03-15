@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -117,11 +118,67 @@ async def health_alias():
     }
 
 
+# ── WebSocket live-data helpers ───────────────────────────────────────────────
+
+async def _collect_live_snapshot() -> dict:
+    """Gather a lightweight snapshot of live system state for WebSocket push."""
+    info = nautilus_system.get_system_info()
+
+    # System metrics (non-blocking psutil)
+    metrics: dict = {}
+    try:
+        import psutil
+        metrics = {
+            "cpu_percent": round(psutil.cpu_percent(interval=None), 1),
+            "memory_percent": round(psutil.virtual_memory().percent, 1),
+        }
+    except Exception:
+        pass
+
+    # Strategies
+    strategy_list = [
+        {
+            "id": s["id"],
+            "name": s.get("name", s["id"]),
+            "status": s.get("status", "unknown"),
+        }
+        for s in nautilus_system.get_all_strategies()
+    ]
+
+    # Open positions (from latest backtest results, filtered by closed set)
+    all_positions = []
+    for results in nautilus_system.backtest_results.values():
+        all_positions.extend(results.get("positions", []))
+    open_positions = [p for p in all_positions if p.get("is_open")]
+
+    # Recent orders count
+    order_count = sum(
+        len(r.get("orders", []))
+        for r in nautilus_system.backtest_results.values()
+    )
+
+    return {
+        "type": "live_data",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "engine": {
+            "is_initialized": info["is_initialized"],
+            "trader_id": info["trader_id"],
+            "strategies_count": info["strategies_count"],
+            "backtests_count": info["backtests_count"],
+        },
+        "metrics": metrics,
+        "strategies": strategy_list,
+        "open_positions_count": len(open_positions),
+        "total_orders_count": order_count,
+    }
+
+
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    last_push = 0.0
     try:
         info = nautilus_system.get_system_info()
         await websocket.send_json(
@@ -134,15 +191,25 @@ async def websocket_endpoint(websocket: WebSocket):
         )
         while True:
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                # Short timeout so we can push live data on schedule
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=2.0)
                 msg = json.loads(data)
                 if msg.get("type") == "ping":
                     await websocket.send_json({"type": "pong"})
             except asyncio.TimeoutError:
+                now = time.time()
+                # Heartbeat every tick
                 await websocket.send_json(
                     {"type": "heartbeat", "ts": datetime.now(timezone.utc).isoformat()}
                 )
+                # Full live-data push every 3 seconds
+                if now - last_push >= 3.0:
+                    snapshot = await _collect_live_snapshot()
+                    await websocket.send_json(snapshot)
+                    last_push = now
     except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
         manager.disconnect(websocket)
 
 

@@ -23,11 +23,35 @@ def increment_request_counter() -> None:
 
 @router.get("/health")
 async def health_check():
+    checks: dict = {}
+
+    # 1. SQLite database reachable?
+    try:
+        async with database.aiosqlite.connect(database.DB_PATH) as db:
+            await db.execute("SELECT 1")
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {exc}"
+
+    # 2. Nautilus engine state
+    info = nautilus_system.get_system_info()
+    checks["engine"] = "initialized" if info["is_initialized"] else "not_initialized"
+
+    # 3. psutil available?
+    try:
+        import psutil
+        psutil.cpu_percent(interval=None)
+        checks["psutil"] = "ok"
+    except Exception:
+        checks["psutil"] = "unavailable"
+
+    all_ok = all(v in ("ok", "initialized", "not_initialized") for v in checks.values())
     return {
-        "status": "healthy",
+        "status": "healthy" if all_ok else "degraded",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "nautilus-trader-api",
         "version": "2.0.0",
+        "checks": checks,
     }
 
 
