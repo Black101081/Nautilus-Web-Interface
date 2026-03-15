@@ -359,7 +359,7 @@ class NautilusTradingSystem:
             running += pnl
             ts_secs = (pos.ts_closed or 0) / 1e9
             try:
-                time_str = datetime.utcfromtimestamp(ts_secs).isoformat()
+                time_str = datetime.fromtimestamp(ts_secs, tz=timezone.utc).isoformat()
             except Exception:
                 time_str = datetime.now(timezone.utc).isoformat()
             equity_curve.append({"time": time_str, "equity": round(running, 2)})

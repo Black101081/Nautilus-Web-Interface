@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      # Comma-separated list of allowed frontend origins
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
+      # Set a strong random value to enable API key auth:
+      #   openssl rand -hex 32
+      API_KEY: ""
+      NAUTILUS_API_PORT: "8000"
+    volumes:
+      # Persist SQLite database across container restarts
+      - backend_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_NAUTILUS_API_URL: "http://localhost:8000"
+        VITE_WS_URL: "ws://localhost:8000"
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_data:
