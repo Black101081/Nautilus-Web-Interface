@@ -327,8 +327,9 @@ def test_auth_disabled_by_default(client):
     assert r.status_code == 200
 
 
-def test_auth_enabled_blocks_without_key(monkeypatch, tmp_path):
-    """With API_KEY set, requests without the header should get 401."""
+@pytest.fixture
+def authed_client(monkeypatch, tmp_path):
+    """TestClient with API_KEY='test-secret' enabled."""
     import auth
     import database
 
@@ -339,21 +340,16 @@ def test_auth_enabled_blocks_without_key(monkeypatch, tmp_path):
     from nautilus_fastapi import app
 
     with TestClient(app, raise_server_exceptions=False) as c:
-        r = c.get("/api/strategies")
-        assert r.status_code == 401
+        yield c
 
 
-def test_auth_enabled_passes_with_key(monkeypatch, tmp_path):
+def test_auth_enabled_blocks_without_key(authed_client):
+    """With API_KEY set, requests without the header should get 401."""
+    r = authed_client.get("/api/strategies")
+    assert r.status_code == 401
+
+
+def test_auth_enabled_passes_with_key(authed_client):
     """With API_KEY set and correct header, requests should pass through."""
-    import auth
-    import database
-
-    monkeypatch.setattr(auth, "API_KEY", "test-secret")
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
-
-    from fastapi.testclient import TestClient
-    from nautilus_fastapi import app
-
-    with TestClient(app) as c:
-        r = c.get("/api/strategies", headers={"X-API-Key": "test-secret"})
-        assert r.status_code == 200
+    r = authed_client.get("/api/strategies", headers={"X-API-Key": "test-secret"})
+    assert r.status_code == 200

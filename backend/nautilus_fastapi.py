@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -71,10 +72,10 @@ app.add_middleware(
 # API key auth (enabled when API_KEY env var is set)
 app.add_middleware(ApiKeyMiddleware)
 
-# Request counter middleware (async-safe)
+# Request counter middleware
 @app.middleware("http")
 async def _count_requests(request: Request, call_next):
-    await system.increment_request_counter()
+    system.increment_request_counter()
     return await call_next(request)
 
 
@@ -108,7 +109,6 @@ async def root():
 # Alias so /health works in addition to /api/health
 @app.get("/health")
 async def health_alias():
-    from datetime import datetime, timezone
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -139,7 +139,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 if msg.get("type") == "ping":
                     await websocket.send_json({"type": "pong"})
             except asyncio.TimeoutError:
-                from datetime import datetime, timezone
                 await websocket.send_json(
                     {"type": "heartbeat", "ts": datetime.now(timezone.utc).isoformat()}
                 )

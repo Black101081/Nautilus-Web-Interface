@@ -89,23 +89,19 @@ async def init_db() -> None:
 
 async def _seed_defaults(db: aiosqlite.Connection) -> None:
     """Populate kv_store with defaults if they don't exist yet."""
-    # Risk limits
+    # Single query: which namespaces already have rows?
     async with db.execute(
-        "SELECT COUNT(*) FROM kv_store WHERE namespace='risk'"
+        "SELECT namespace FROM kv_store WHERE namespace IN ('risk', 'settings') GROUP BY namespace"
     ) as cur:
-        (count,) = await cur.fetchone()
-    if count == 0:
+        existing = {row[0] for row in await cur.fetchall()}
+
+    if "risk" not in existing:
         await db.execute(
             "INSERT INTO kv_store (namespace, key, value) VALUES ('risk', 'limits', ?)",
             (json.dumps(DEFAULT_RISK_LIMITS),),
         )
 
-    # Settings
-    async with db.execute(
-        "SELECT COUNT(*) FROM kv_store WHERE namespace='settings'"
-    ) as cur:
-        (count,) = await cur.fetchone()
-    if count == 0:
+    if "settings" not in existing:
         for section, values in DEFAULT_SETTINGS.items():
             await db.execute(
                 "INSERT INTO kv_store (namespace, key, value) VALUES ('settings', ?, ?)",

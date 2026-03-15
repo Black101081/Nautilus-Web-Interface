@@ -18,13 +18,10 @@ PUBLIC_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/health", "/api/health",
 
 def _is_public(path: str) -> bool:
     """Return True if the request path should bypass API key auth."""
-    # Exact root match
-    if path == "/":
-        return True
-    for prefix in PUBLIC_PREFIXES:
-        if path == prefix or path.startswith(prefix + "/") or path.startswith(prefix + "?"):
-            return True
-    return False
+    return any(
+        path == prefix or path.startswith(prefix + "/") or path.startswith(prefix + "?")
+        for prefix in PUBLIC_PREFIXES
+    )
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):

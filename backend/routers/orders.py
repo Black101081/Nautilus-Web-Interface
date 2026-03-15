@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 import database
 from state import nautilus_system
+from utils import normalize_order
 
 router = APIRouter(prefix="/api", tags=["orders"])
 
@@ -25,23 +26,9 @@ async def list_orders():
 
     for results in nautilus_system.backtest_results.values():
         for o in results.get("orders", []):
-            side_raw = str(o.get("side", ""))
-            side = "BUY" if "BUY" in side_raw else "SELL" if "SELL" in side_raw else side_raw
-            status_raw = str(o.get("status", ""))
-            status = "FILLED" if "FILLED" in status_raw else status_raw
-            all_orders.append(
-                {
-                    "id": o.get("id", ""),
-                    "instrument": o.get("instrument_id", ""),
-                    "side": side,
-                    "type": "MARKET",
-                    "quantity": o.get("quantity", 0),
-                    "price": o.get("avg_px"),
-                    "status": status,
-                    "filled_qty": o.get("filled_qty", 0),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-            )
+            row = normalize_order(o)
+            row["timestamp"] = datetime.now(timezone.utc).isoformat()
+            all_orders.append(row)
 
     db_orders = await database.list_orders()
     all_orders.extend(db_orders)

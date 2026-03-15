@@ -1,4 +1,3 @@
-import asyncio
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -7,18 +6,19 @@ from fastapi import APIRouter, Body
 
 import database
 from state import nautilus_system
+from utils import normalize_order
 
 router = APIRouter(prefix="/api", tags=["system"])
 
 _server_start_time = time.time()
 _request_counter = 0
-_counter_lock = asyncio.Lock()
 
 
-async def increment_request_counter() -> None:
+def increment_request_counter() -> None:
+    # asyncio is single-threaded: += on int is safe without a lock
+    # (no await between the read and write means no interleaving)
     global _request_counter
-    async with _counter_lock:
-        _request_counter += 1
+    _request_counter += 1
 
 
 @router.get("/health")
@@ -89,7 +89,7 @@ async def get_system_metrics():
     try:
         import psutil
 
-        cpu = psutil.cpu_percent(interval=0.1)
+        cpu = psutil.cpu_percent(interval=None)  # non-blocking; returns cached value
         mem = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
         return {
@@ -151,22 +151,9 @@ async def list_trades(limit: int = 20):
     all_trades = []
     for results in nautilus_system.backtest_results.values():
         for order in results.get("orders", []):
-            side_raw = str(order.get("side", ""))
-            side = "BUY" if "BUY" in side_raw else "SELL" if "SELL" in side_raw else side_raw
-            status_raw = str(order.get("status", ""))
-            status = "FILLED" if "FILLED" in status_raw else status_raw
-            all_trades.append(
-                {
-                    "id": order.get("id", ""),
-                    "instrument": order.get("instrument_id", ""),
-                    "side": side,
-                    "quantity": order.get("quantity", 0),
-                    "price": order.get("avg_px"),
-                    "status": status,
-                    "filled_qty": order.get("filled_qty", 0),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-            )
+            row = normalize_order(order)
+            row["timestamp"] = datetime.now(timezone.utc).isoformat()
+            all_trades.append(row)
     return {"trades": all_trades[:limit], "count": len(all_trades)}
 
 
