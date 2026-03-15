@@ -9,7 +9,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
-import { API_CONFIG } from '../config';
+import api from '../lib/api';
 
 interface Strategy {
   id: string;
@@ -92,10 +92,9 @@ export default function BacktestingPage() {
   const [showPositions, setShowPositions] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/strategies`)
-      .then(r => r.json())
+    api.get<{ strategies: Strategy[] }>('/api/strategies')
       .then(data => {
-        const strats: Strategy[] = Array.isArray(data) ? data : (data.strategies ?? []);
+        const strats: Strategy[] = data.strategies ?? [];
         setStrategies(strats);
         if (strats.length > 0) setSelectedStrategy(strats[0].id);
       })
@@ -114,18 +113,12 @@ export default function BacktestingPage() {
           setRunning(false);
           return;
         }
-        const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/nautilus/demo-backtest`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fast_period: fastPeriod,
-            slow_period: slowPeriod,
-            starting_balance: demoBalance,
-            num_bars: numBars,
-          }),
+        const data = await api.post<{ result: BacktestResult }>('/api/nautilus/demo-backtest', {
+          fast_period: fastPeriod,
+          slow_period: slowPeriod,
+          starting_balance: demoBalance,
+          num_bars: numBars,
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail ?? 'Demo backtest failed');
         setResult(data.result);
       } else {
         if (!selectedStrategy) {
@@ -133,18 +126,12 @@ export default function BacktestingPage() {
           setRunning(false);
           return;
         }
-        const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/nautilus/backtest`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            strategy_id: selectedStrategy,
-            start_date: startDate,
-            end_date: endDate,
-            starting_balance: realBalance,
-          }),
+        const data = await api.post<{ result: BacktestResult }>('/api/nautilus/backtest', {
+          strategy_id: selectedStrategy,
+          start_date: startDate,
+          end_date: endDate,
+          starting_balance: realBalance,
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail ?? 'Backtest failed');
         setResult(data.result);
       }
     } catch (err: any) {

@@ -13,7 +13,11 @@ from datetime import datetime
 
 # Import Nautilus integration
 from nautilus_integration import nautilus_manager
+from nautilus_core import NautilusTradingSystem
 from auth import ApiKeyMiddleware
+
+# Separate system instance for backtesting (doesn't require a data catalog)
+_trading_system = NautilusTradingSystem()
 
 app = FastAPI(
     title="Nautilus Trader API",
@@ -56,6 +60,18 @@ class RiskLimitsRequest(BaseModel):
     max_position_size: Optional[float] = None
     max_daily_loss: Optional[float] = None
     max_positions: Optional[int] = None
+
+class DemoBacktestRequest(BaseModel):
+    fast_period: int = 10
+    slow_period: int = 20
+    starting_balance: float = 100000.0
+    num_bars: int = 500
+
+class BacktestRequest(BaseModel):
+    strategy_id: str
+    start_date: str = "2024-01-01"
+    end_date: str = "2024-12-31"
+    starting_balance: float = 100000.0
 
 # ---------- Health ----------
 
@@ -287,17 +303,47 @@ async def get_performance_summary():
     total_realized = sum(p.get("realized_pnl", 0) for p in positions)
     total_unrealized = sum(p.get("unrealized_pnl", 0) for p in nautilus_manager.get_positions())
     total_trades = len(trades)
-    winning = sum(1 for t in trades if t.get("filled_qty", 0) > 0)
+    winning = sum(1 for t in trades if t.get("realized_pnl", 0) > 0)
+    losing = sum(1 for t in trades if t.get("realized_pnl", 0) < 0)
+    win_rate = round(winning / total_trades * 100, 1) if total_trades > 0 else 0.0
 
     return {
         "total_pnl": round(total_realized + total_unrealized, 2),
         "realized_pnl": round(total_realized, 2),
         "unrealized_pnl": round(total_unrealized, 2),
         "total_trades": total_trades,
-        "win_rate": round(winning / total_trades * 100, 1) if total_trades > 0 else 0.0,
+        "winning_trades": winning,
+        "losing_trades": losing,
+        "win_rate": win_rate,
         "total_positions": len(positions),
         "open_positions": len(nautilus_manager.get_positions()),
     }
+
+# ---------- Backtesting ----------
+
+@app.post("/api/nautilus/demo-backtest")
+async def run_demo_backtest(request: DemoBacktestRequest):
+    result = _trading_system.run_demo_backtest(
+        fast_period=request.fast_period,
+        slow_period=request.slow_period,
+        starting_balance=request.starting_balance,
+        num_bars=request.num_bars,
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("message", "Demo backtest failed"))
+    return {"result": result}
+
+@app.post("/api/nautilus/backtest")
+async def run_backtest(request: BacktestRequest):
+    result = _trading_system.run_backtest(
+        strategy_id=request.strategy_id,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        starting_balance=request.starting_balance,
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("message", "Backtest failed"))
+    return {"result": result}
 
 # ---------- Alerts ----------
 

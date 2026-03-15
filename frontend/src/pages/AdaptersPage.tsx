@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { API_CONFIG } from '../config';
 import { useNotification } from '@/contexts/NotificationContext';
+import api from '@/lib/api';
 
 interface Adapter {
   id: string;
@@ -48,8 +48,7 @@ export default function AdaptersPage() {
   const [filterCategory, setFilterCategory] = useState<string>('All');
 
   useEffect(() => {
-    fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/adapters`)
-      .then(r => r.json())
+    api.get<{ adapters: Adapter[] }>('/api/adapters')
       .then(data => {
         const list: Adapter[] = data.adapters ?? [];
         setAdapters(list);

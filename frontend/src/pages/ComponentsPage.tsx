@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNotification } from "@/contexts/NotificationContext";
-import { API_CONFIG } from "@/config";
+import api from "@/lib/api";
 
 interface Component {
   id: string;
@@ -27,8 +27,7 @@ export default function ComponentsPage() {
 
   const fetchComponents = useCallback(async () => {
     try {
-      const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/components`);
-      const data = await res.json();
+      const data = await api.get<{ components: Component[] }>('/api/components');
       setComponents(data.components ?? []);
     } catch {
       notifyError("Failed to load components");
@@ -55,11 +54,7 @@ export default function ComponentsPage() {
         ? "/api/component/stop"
         : "/api/component/start";
 
-      await fetch(`${API_CONFIG.NAUTILUS_API_URL}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ component: label }),
-      });
+      await api.post(endpoint, { component: label });
       success(`${label} ${action.toLowerCase()}ed successfully`);
       await fetchComponents();
     } catch {

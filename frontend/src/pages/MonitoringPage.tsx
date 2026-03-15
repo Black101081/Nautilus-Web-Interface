@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNotification } from "@/contexts/NotificationContext";
-import { API_CONFIG } from "@/config";
+import api from "@/lib/api";
 
 interface SystemMetrics {
   cpu_percent: number;
@@ -33,8 +33,7 @@ export default function MonitoringPage() {
 
   const fetchMetrics = useCallback(async () => {
     try {
-      const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/system/metrics`);
-      const data = await res.json();
+      const data = await api.get<SystemMetrics>('/api/system/metrics');
       setMetrics(data);
     } catch {
       notifyError("Failed to load system metrics");

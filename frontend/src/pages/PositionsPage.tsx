@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_CONFIG } from '../config';
+import api from '../lib/api';
 
 interface Position {
   id: string;
@@ -26,12 +26,9 @@ export default function PositionsPage() {
 
   const fetchPositions = async () => {
     try {
-      const response = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/positions`);
-      const data = await response.json();
+      const data = await api.get<{ positions: Position[] }>('/api/positions');
       setPositions(data.positions || []);
-      
-      // Calculate total P&L
-      const total = (data.positions || []).reduce((sum: number, pos: Position) => 
+      const total = (data.positions || []).reduce((sum: number, pos: Position) =>
         sum + pos.unrealized_pnl + pos.realized_pnl, 0
       );
       setTotalPnL(total);
@@ -44,11 +41,8 @@ export default function PositionsPage() {
 
   const handleClosePosition = async (positionId: string) => {
     if (!confirm('Close this position?')) return;
-    
     try {
-      await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/positions/${positionId}/close`, {
-        method: 'POST'
-      });
+      await api.post(`/api/positions/${positionId}/close`);
       fetchPositions();
     } catch (error) {
       console.error('Failed to close position:', error);

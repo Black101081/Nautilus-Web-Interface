@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNotification } from "@/contexts/NotificationContext";
-import { API_CONFIG } from "@/config";
+import api from "@/lib/api";
 
 interface Settings {
   system_name: string;
@@ -35,8 +35,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/settings`)
-      .then(r => r.json())
+    api.get<Settings>('/api/settings')
       .then(data => setSettings({ ...DEFAULTS, ...data }))
       .catch(() => {/* use defaults */})
       .finally(() => setLoading(false));
@@ -48,13 +47,8 @@ export default function SettingsPage() {
   const saveAll = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      });
-      if (res.ok) success("All settings saved successfully!");
-      else notifyError("Failed to save settings");
+      await api.post('/api/settings', settings);
+      success("All settings saved successfully!");
     } catch {
       notifyError("Failed to save settings");
     } finally {
