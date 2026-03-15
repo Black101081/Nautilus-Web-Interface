@@ -371,7 +371,40 @@ async def update_risk_limits(updates: Dict[str, Any]) -> Dict[str, Any]:
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
-async def get_settings() -> Dict[str, Any]:
+_SENSITIVE_SETTINGS_FIELDS = ("smtp_password", "telegram_bot_token")
+
+
+def _encrypt_sensitive_settings(notif: dict) -> dict:
+    """Return a copy of notif with sensitive fields encrypted."""
+    from credential_utils import encrypt_credential
+    result = dict(notif)
+    for field in _SENSITIVE_SETTINGS_FIELDS:
+        if field in result and result[field]:
+            result[field] = encrypt_credential(result[field])
+    return result
+
+
+def _decrypt_sensitive_settings(notif: dict) -> dict:
+    """Return a copy of notif with sensitive fields decrypted (for internal use)."""
+    from credential_utils import decrypt_credential
+    result = dict(notif)
+    for field in _SENSITIVE_SETTINGS_FIELDS:
+        if field in result and result[field]:
+            decrypted = decrypt_credential(result[field])
+            result[field] = decrypted if decrypted else result[field]
+    return result
+
+
+def _mask_sensitive_settings(notif: dict) -> dict:
+    """Return a copy of notif with sensitive fields masked for API responses."""
+    result = dict(notif)
+    for field in _SENSITIVE_SETTINGS_FIELDS:
+        if field in result and result[field]:
+            result[field] = "****"
+    return result
+
+
+async def get_settings(mask_sensitive: bool = True) -> Dict[str, Any]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT key, value FROM kv_store WHERE namespace='settings'"
@@ -379,17 +412,41 @@ async def get_settings() -> Dict[str, Any]:
             rows = await cur.fetchall()
     if not rows:
         return DEFAULT_SETTINGS.copy()
-    return {key: json.loads(value) for key, value in rows}
+    result = {key: json.loads(value) for key, value in rows}
+    if mask_sensitive and "notifications" in result:
+        result["notifications"] = _mask_sensitive_settings(result["notifications"])
+    return result
+
+
+async def get_settings_raw() -> Dict[str, Any]:
+    """Return settings with decrypted sensitive fields (for internal notification use)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT key, value FROM kv_store WHERE namespace='settings'"
+        ) as cur:
+            rows = await cur.fetchall()
+    if not rows:
+        return DEFAULT_SETTINGS.copy()
+    result = {key: json.loads(value) for key, value in rows}
+    if "notifications" in result:
+        result["notifications"] = _decrypt_sensitive_settings(result["notifications"])
+    return result
 
 
 async def update_settings(body: Dict[str, Any]) -> Dict[str, Any]:
-    settings = await get_settings()
+    settings = await get_settings(mask_sensitive=False)
+    # Decrypt existing encrypted fields before merging
+    if "notifications" in settings:
+        settings["notifications"] = _decrypt_sensitive_settings(settings["notifications"])
     for section, values in body.items():
         if isinstance(values, dict):
             if section in settings:
                 settings[section].update(values)
             else:
                 settings[section] = values
+    # Encrypt sensitive notification fields before storing
+    if "notifications" in settings:
+        settings["notifications"] = _encrypt_sensitive_settings(settings["notifications"])
     async with aiosqlite.connect(DB_PATH) as db:
         for section, values in settings.items():
             await db.execute(
@@ -397,7 +454,11 @@ async def update_settings(body: Dict[str, Any]) -> Dict[str, Any]:
                 (section, json.dumps(values)),
             )
         await db.commit()
-    return settings
+    # Return masked version
+    result = dict(settings)
+    if "notifications" in result:
+        result["notifications"] = _mask_sensitive_settings(result["notifications"])
+    return result
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────

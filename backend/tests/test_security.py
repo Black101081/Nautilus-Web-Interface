@@ -46,6 +46,20 @@ class TestCredentialEncryption:
     Direct DB reads must never reveal plaintext secrets.
     """
 
+    @pytest.fixture
+    def client(self, tmp_path, monkeypatch):
+        """Authenticated client for credential tests."""
+        import database
+        monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+        from fastapi.testclient import TestClient
+        from nautilus_fastapi import app
+        with TestClient(app) as c:
+            login_r = c.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+            if login_r.status_code == 200:
+                token = login_r.json()["access_token"]
+                c.headers.update({"Authorization": f"Bearer {token}"})
+            yield c
+
     @pytest.mark.xfail(reason="S1-01: credential encryption not implemented yet")
     def test_stored_key_is_not_plaintext(self, client, db_path):
         """After connecting, the DB must NOT contain the raw API key."""

@@ -181,8 +181,8 @@ class LiveTradingManager:
 
         while True:
             try:
-                await self._connect_ws(symbol, on_message, current_backoff)
-                current_backoff = backoff  # reset on clean disconnect
+                await self._connect_ws(symbol, on_message, backoff=current_backoff)
+                # Don't reset backoff on success — keep monotonically increasing
                 await asyncio.sleep(0)  # yield so cancellation / timeout can fire
             except asyncio.CancelledError:
                 raise

@@ -16,17 +16,15 @@ import httpx
 
 
 class EmailNotifier:
-    """Sends alert emails via SMTP with up to 3 retry attempts."""
+    """Sends alert emails via SMTP. Caller handles retry logic."""
 
-    async def send(
-        self,
-        subject: str,
-        body: str,
-        to: str,
-        settings: Dict[str, Any] = None,
-    ) -> None:
-        """Send an email.  Raises on persistent failure after 3 attempts."""
-        settings = settings or {}
+    def configure(self, settings: Dict[str, Any]) -> None:
+        """Store SMTP settings for subsequent send() calls."""
+        self._settings = settings or {}
+
+    async def send(self, subject: str, body: str, to: str) -> None:
+        """Send a single email attempt. Raises on failure (no internal retry)."""
+        settings = getattr(self, "_settings", {})
         smtp_host = settings.get("smtp_host", "")
         smtp_port = int(settings.get("smtp_port", 587))
         smtp_user = settings.get("smtp_user", "")
@@ -42,22 +40,12 @@ class EmailNotifier:
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "html"))
 
-        last_exc: Exception = RuntimeError("Unknown SMTP error")
-        for attempt in range(3):
-            try:
-                context = ssl.create_default_context()
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-                    server.starttls(context=context)
-                    if smtp_user and smtp_password:
-                        server.login(smtp_user, smtp_password)
-                    server.sendmail(from_addr, to, msg.as_string())
-                return  # Success
-            except Exception as exc:
-                last_exc = exc
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
-
-        raise last_exc
+        context = ssl.create_default_context()
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.starttls(context=context)
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.sendmail(from_addr, to, msg.as_string())
 
 
 class TelegramNotifier:
@@ -86,10 +74,11 @@ async def notify_alert_triggered(alert: dict) -> None:
     Send email and/or Telegram notification when an alert is triggered.
     Called by database.trigger_alert() after the DB update.
     Settings are read live from the database on each call.
+    Retries email up to 3 times with exponential backoff.
     """
     import database  # lazy import to avoid circular dependency
 
-    settings_data = await database.get_settings()
+    settings_data = await database.get_settings_raw()
     notif: dict = settings_data.get("notifications", {})
 
     symbol = alert.get("symbol", "")
@@ -105,19 +94,25 @@ async def notify_alert_triggered(alert: dict) -> None:
         f"<p><b>Message:</b> {message_text}</p>"
     )
 
-    # ── Email ────────────────────────────────────────────────────────────────
+    # ── Email (with up to 3 retry attempts) ──────────────────────────────────
     if notif.get("email_enabled") and notif.get("email_to"):
-        try:
-            await email_notifier.send(
-                subject=subject,
-                body=email_body,
-                to=notif["email_to"],
-                settings=notif,
-            )
-        except Exception as exc:
-            # Log but don't re-raise — notifications are best-effort
+        email_notifier.configure(notif)
+        last_exc: Exception = RuntimeError("Email failed")
+        for attempt in range(3):
+            try:
+                await email_notifier.send(
+                    subject=subject,
+                    body=email_body,
+                    to=notif["email_to"],
+                )
+                break  # Success — stop retrying
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+        else:
             import logging
-            logging.getLogger(__name__).warning("Email notification failed: %s", exc)
+            logging.getLogger(__name__).warning("Email notification failed after 3 attempts: %s", last_exc)
 
     # ── Telegram ──────────────────────────────────────────────────────────────
     if notif.get("telegram_enabled") and notif.get("telegram_bot_token"):

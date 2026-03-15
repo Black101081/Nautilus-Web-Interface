@@ -150,6 +150,33 @@ class NautilusTradingSystem:
                     trade_size=Decimal(str(config.get("trade_size", "100000"))),
                 )
                 name = config.get("name", "RSI Mean-Reversion")
+            elif strategy_type == "macd":
+                fast = int(config.get("fast_period", 12))
+                slow = int(config.get("slow_period", 26))
+                signal = int(config.get("signal_period", 9))
+                name = config.get("name", "MACD Crossover")
+                # MACD doesn't map to a Nautilus engine config — stored as plain dict
+                self.strategies[strategy_id] = {
+                    "id": strategy_id,
+                    "name": name,
+                    "type": strategy_type,
+                    "config": {
+                        "fast_period": fast,
+                        "slow_period": slow,
+                        "signal_period": signal,
+                        "instrument_id": config.get("instrument_id", "EUR/USD.SIM"),
+                        "bar_type": config.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
+                        "trade_size": str(config.get("trade_size", "100000")),
+                    },
+                    "status": "created",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                return {
+                    "success": True,
+                    "message": f"Strategy {strategy_id} created",
+                    "strategy_id": strategy_id,
+                    "type": strategy_type,
+                }
             else:
                 return {
                     "success": False,

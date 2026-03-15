@@ -54,11 +54,12 @@ def authenticate_user(username: str, password: str) -> Optional[dict]:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a signed JWT access token."""
+    import uuid
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     )
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "jti": str(uuid.uuid4())})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 

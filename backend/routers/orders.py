@@ -52,7 +52,10 @@ async def create_order(req: OrderCreateRequest):
     if live_manager.is_connected():
         try:
             exchange_result = await live_manager.submit_order(order_dict)
-            exchange_order_id = exchange_result.get("exchange_order_id")
+            exchange_order_id = (
+                exchange_result.get("exchange_order_id")
+                or exchange_result.get("order_id")
+            )
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
