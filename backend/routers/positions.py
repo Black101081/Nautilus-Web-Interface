@@ -19,13 +19,13 @@ async def list_positions():
     db_positions = await database.list_db_positions(open_only=True)
 
     if db_positions:
-        return db_positions[:100]
+        return db_positions
 
     # Fallback: in-memory backtest results (before first backtest persists to DB)
     all_positions = []
     for results in nautilus_system.backtest_results.values():
         all_positions.extend(results.get("positions", []))
-    return [p for p in all_positions if p.get("is_open", False)][:100]
+    return [p for p in all_positions if p.get("is_open", False)]
 
 
 @router.post("/positions/{position_id}/close")

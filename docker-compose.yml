@@ -18,6 +18,8 @@ services:
       # Persist SQLite database across container restarts
       - backend_data:/app/data
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: "1.0"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -38,6 +40,8 @@ services:
     volumes:
       - admin_data:/app/data
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: "0.5"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/admin/health')"]
       interval: 30s
@@ -60,6 +64,8 @@ services:
       admin_db_api:
         condition: service_healthy
     restart: unless-stopped
+    mem_limit: 64m
+    cpus: "0.25"
 
 volumes:
   backend_data:

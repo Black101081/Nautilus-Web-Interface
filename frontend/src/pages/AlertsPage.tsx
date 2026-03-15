@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../lib/api';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 interface Alert {
   id: string;
@@ -17,6 +18,9 @@ const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'DOTUSDT
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [triggeredNotice, setTriggeredNotice] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
     symbol: 'BTCUSDT',
@@ -24,17 +28,36 @@ export default function AlertsPage() {
     price: 0,
     message: '',
   });
+  const { lastMessage } = useWebSocket();
+  const prevMessageRef = useRef(lastMessage);
 
   useEffect(() => {
     fetchAlerts();
   }, []);
 
+  // Listen for alert_triggered WebSocket events
+  useEffect(() => {
+    if (lastMessage && lastMessage !== prevMessageRef.current) {
+      prevMessageRef.current = lastMessage;
+      if (lastMessage.type === 'alert_triggered') {
+        fetchAlerts();
+        const alertData = (lastMessage as any).alert;
+        const notice = alertData
+          ? `Alert triggered: ${alertData.symbol} ${alertData.condition} $${alertData.price}`
+          : 'An alert was triggered';
+        setTriggeredNotice(notice);
+        setTimeout(() => setTriggeredNotice(null), 5000);
+      }
+    }
+  }, [lastMessage]);
+
   const fetchAlerts = async () => {
     try {
       const data = await api.get<{ alerts: Alert[] }>('/api/alerts');
       setAlerts(data.alerts || []);
+      setFetchError(null);
     } catch (err) {
-      console.error('Failed to fetch alerts:', err);
+      setFetchError(err instanceof Error ? err.message : 'Failed to load alerts');
     } finally {
       setLoading(false);
     }
@@ -42,13 +65,14 @@ export default function AlertsPage() {
 
   const handleCreate = async () => {
     if (!form.price) return;
+    setFormError(null);
     try {
       await api.post('/api/alerts', form);
       setShowModal(false);
       setForm({ symbol: 'BTCUSDT', condition: 'above', price: 0, message: '' });
       fetchAlerts();
     } catch (err) {
-      console.error('Failed to create alert:', err);
+      setFormError(err instanceof Error ? err.message : 'Failed to create alert');
     }
   };
 
@@ -58,7 +82,7 @@ export default function AlertsPage() {
       await api.delete(`/api/alerts/${id}`);
       fetchAlerts();
     } catch (err) {
-      console.error('Failed to delete alert:', err);
+      setFetchError(err instanceof Error ? err.message : 'Failed to delete alert');
     }
   };
 
@@ -82,6 +106,16 @@ export default function AlertsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-yellow-50 p-8">
       <div className="max-w-5xl mx-auto">
+        {triggeredNotice && (
+          <div className="mb-4 bg-blue-50 border border-blue-200 text-blue-800 rounded-lg px-4 py-3 text-sm font-semibold">
+            🔔 {triggeredNotice}
+          </div>
+        )}
+        {fetchError && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+            {fetchError}
+          </div>
+        )}
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
@@ -216,9 +250,14 @@ export default function AlertsPage() {
                   />
                 </div>
               </div>
+              {formError && (
+                <div className="mt-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">
+                  {formError}
+                </div>
+              )}
               <div className="flex gap-3 mt-6">
                 <button
-                  onClick={() => setShowModal(false)}
+                  onClick={() => { setShowModal(false); setFormError(null); }}
                   className="flex-1 px-5 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-semibold"
                 >
                   Cancel

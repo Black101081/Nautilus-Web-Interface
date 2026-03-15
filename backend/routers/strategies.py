@@ -3,6 +3,7 @@ Strategies router — full CRUD with SQLite persistence.
 Supports: sma_crossover, rsi
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -63,7 +64,6 @@ class StrategyCreateRequest(BaseModel):
 
 def _db_row_to_strategy(row: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a DB row into the dict shape used by nautilus_system.strategies."""
-    import json
     cfg = {}
     try:
         cfg = json.loads(row.get("config", "{}"))
@@ -180,6 +180,16 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
     strategy_type = body.get("type", "sma_crossover")
     if strategy_type not in _STRATEGY_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown strategy type: {strategy_type}")
+
+    # SMA period validation
+    if strategy_type == "sma_crossover":
+        fast = int(body.get("fast_period", 10))
+        slow = int(body.get("slow_period", 20))
+        if fast >= slow:
+            raise HTTPException(
+                status_code=422,
+                detail=f"fast_period ({fast}) must be less than slow_period ({slow})",
+            )
 
     defaults = _STRATEGY_TYPES[strategy_type]["default_config"].copy()
     sid = body.get("id") or f"STR-{uuid.uuid4().hex[:8].upper()}"

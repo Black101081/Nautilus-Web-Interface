@@ -65,25 +65,39 @@ function Router() {
   );
 }
 
+function LogoutButton({ onLogout }: { onLogout: () => void }) {
+  return (
+    <button
+      onClick={onLogout}
+      title="Logout"
+      className="fixed bottom-4 right-4 z-50 px-3 py-1.5 bg-gray-800 text-gray-300 rounded-lg text-xs font-medium hover:bg-red-700 hover:text-white transition-colors shadow-lg opacity-60 hover:opacity-100"
+    >
+      Logout
+    </button>
+  );
+}
+
 function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // Check if we've already authenticated this session
-    const stored = sessionStorage.getItem('nautilus_auth');
-    if (stored === 'true') {
-      setAuthenticated(true);
-    } else {
-      setAuthenticated(false);
-    }
+    // Persist auth across page refreshes via localStorage
+    const stored = localStorage.getItem('nautilus_auth');
+    setAuthenticated(stored === 'true');
   }, []);
 
   const handleLogin = (apiKey: string) => {
     if (apiKey) {
       localStorage.setItem('nautilus_api_key', apiKey);
     }
-    sessionStorage.setItem('nautilus_auth', 'true');
+    localStorage.setItem('nautilus_auth', 'true');
     setAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('nautilus_auth');
+    localStorage.removeItem('nautilus_api_key');
+    setAuthenticated(false);
   };
 
   // Still loading auth state
@@ -106,6 +120,7 @@ function App() {
             <Toaster />
             <NotificationContainer />
             <Router />
+            <LogoutButton onLogout={handleLogout} />
           </TooltipProvider>
         </NotificationProvider>
       </ThemeProvider>

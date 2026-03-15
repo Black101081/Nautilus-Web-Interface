@@ -4,11 +4,14 @@ Real integration with Nautilus Trader engine - NOT MOCK DATA
 Uses low-level BacktestEngine API for direct control
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.config import LoggingConfig
@@ -61,12 +64,12 @@ class NautilusTradingSystem:
                 self.catalog = ParquetDataCatalog(self.catalog_path)
                 self.instruments = self.catalog.instruments()
                 
-                print(f"✅ Loaded catalog from {self.catalog_path}")
-                print(f"📊 Available instruments: {len(self.instruments)}")
+                logger.info("Loaded catalog from %s", self.catalog_path)
+                logger.info("Available instruments: %d", len(self.instruments))
                 for instrument in self.instruments:
-                    print(f"   - {instrument.id}")
+                    logger.info("  - %s", instrument.id)
             else:
-                print(f"⚠️  Catalog path not found: {self.catalog_path}")
+                logger.warning("Catalog path not found: %s", self.catalog_path)
                 return {
                     "success": False,
                     "message": f"Data catalog not found at {self.catalog_path}"
@@ -197,9 +200,9 @@ class NautilusTradingSystem:
             strategy_info = self.strategies[strategy_id]
             strategy_config = strategy_info["config"]
             
-            print(f"🚀 Starting backtest for {strategy_id}")
-            print(f"📅 Period: {start_date} to {end_date}")
-            print(f"💰 Starting balance: ${starting_balance:,.2f}")
+            logger.info("Starting backtest for %s", strategy_id)
+            logger.info("Period: %s to %s", start_date, end_date)
+            logger.info("Starting balance: $%.2f", starting_balance)
             
             # Create BacktestEngine with configuration
             engine_config = BacktestEngineConfig(
@@ -236,7 +239,7 @@ class NautilusTradingSystem:
             engine.add_instrument(instrument)
             
             # Load quote tick data from catalog
-            print(f"📥 Loading quote tick data for {instrument.id}...")
+            logger.info("Loading quote tick data for %s...", instrument.id)
             quote_ticks = self.catalog.quote_ticks(
                 instrument_ids=[str(instrument.id)],
                 start=start_date,
@@ -249,7 +252,7 @@ class NautilusTradingSystem:
                     "message": f"No quote tick data found for {instrument.id} between {start_date} and {end_date}"
                 }
             
-            print(f"✅ Loaded {len(quote_ticks)} quote ticks")
+            logger.info("Loaded %d quote ticks", len(quote_ticks))
             
             # Add data to engine
             engine.add_data(quote_ticks)
@@ -262,10 +265,10 @@ class NautilusTradingSystem:
             engine.add_strategy(strategy=strategy)
             
             # Run backtest
-            print("⚙️  Running backtest...")
+            logger.info("Running backtest...")
             engine.run()
             
-            print("✅ Backtest completed!")
+            logger.info("Backtest completed")
             
             # Extract results from engine
             # Get account
@@ -326,9 +329,9 @@ class NautilusTradingSystem:
             self.strategies[strategy_id]["status"] = "backtested"
             self.strategies[strategy_id]["last_backtest"] = datetime.now(timezone.utc).isoformat()
             
-            print(f"📈 Total P&L: ${total_pnl:,.2f}")
-            print(f"📊 Total Trades: {total_trades}")
-            print(f"🎯 Win Rate: {win_rate:.2f}%")
+            logger.info("Total PnL: $%.2f", total_pnl)
+            logger.info("Total Trades: %d", total_trades)
+            logger.info("Win Rate: %.2f%%", win_rate)
             
             # Clean up
             engine.dispose()
@@ -342,8 +345,8 @@ class NautilusTradingSystem:
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            print(f"❌ Backtest failed: {str(e)}")
-            print(error_trace)
+            logger.error("Backtest failed: %s", e)
+            logger.debug(error_trace)
             
             return {
                 "success": False,
@@ -496,9 +499,9 @@ class NautilusTradingSystem:
             strategy = SMACrossoverStrategy(config=strategy_config)
             engine.add_strategy(strategy=strategy)
 
-            print(f"⚙️  Running demo backtest ({num_bars} bars, fast={fast_period}, slow={slow_period})…")
+            logger.info("Running demo backtest (%d bars, fast=%d, slow=%d)...", num_bars, fast_period, slow_period)
             engine.run()
-            print("✅ Demo backtest complete")
+            logger.info("Demo backtest complete")
 
             accounts = list(engine.cache.accounts())
             account = accounts[0] if accounts else None
@@ -548,8 +551,8 @@ class NautilusTradingSystem:
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            print(f"❌ Demo backtest failed: {e}")
-            print(error_trace)
+            logger.error("Demo backtest failed: %s", e)
+            logger.debug(error_trace)
             return {
                 "success": False,
                 "message": str(e),

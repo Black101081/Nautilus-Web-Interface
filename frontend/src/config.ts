@@ -9,9 +9,7 @@ export const API_CONFIG = {
 };
 
 export async function loadApiConfig(): Promise<void> {
-  console.log('✅ API config loaded');
-  console.log('Nautilus API:', API_CONFIG.NAUTILUS_API_URL);
-  console.log('Admin DB API:', API_CONFIG.ADMIN_DB_API_URL);
+  // no-op: config is resolved from environment variables at build time
 }
 
 export default API_CONFIG;

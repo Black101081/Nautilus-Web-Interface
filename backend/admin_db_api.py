@@ -2,15 +2,17 @@
 Admin Panel Database API
 SQLite database management endpoints with auto audit logging.
 """
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import hashlib
+import secrets
 import sqlite3
 import json
 import os
-import urllib.request
+import httpx
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -18,6 +20,7 @@ from contextlib import asynccontextmanager
 DB_PATH = os.getenv("DB_PATH", "/app/data/admin_panel.db")
 API_PORT = int(os.getenv("ADMIN_DB_API_PORT", "8001"))
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
 # ── Schema creation + seed data ──────────────────────────────────────────────
 
@@ -243,6 +246,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_ADMIN_PUBLIC = frozenset({"/api/admin/health", "/docs", "/redoc", "/openapi.json"})
+
+
+@app.middleware("http")
+async def _admin_auth_middleware(request: Request, call_next):
+    """Enforce ADMIN_API_KEY when set. Public paths are always allowed."""
+    if not ADMIN_API_KEY:
+        return await call_next(request)
+    if request.url.path in _ADMIN_PUBLIC or request.method == "OPTIONS":
+        return await call_next(request)
+    key = request.headers.get("X-Admin-Key", "")
+    if not secrets.compare_digest(key, ADMIN_API_KEY):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    return await call_next(request)
+
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -259,7 +277,22 @@ def _log_action(conn: sqlite3.Connection, action: str, user: str = "system", det
 
 
 def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    """Hash password with PBKDF2-HMAC-SHA256 + random salt (260k iterations)."""
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000)
+    return f"pbkdf2:sha256:{salt}:{dk.hex()}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    """Verify a password against a stored hash (PBKDF2 or legacy SHA256)."""
+    if stored.startswith("pbkdf2:sha256:"):
+        _, _, salt, dk_hex = stored.split(":", 3)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000)
+        return secrets.compare_digest(dk.hex(), dk_hex)
+    # Legacy SHA256 fallback — still works but considered weak
+    return secrets.compare_digest(
+        hashlib.sha256(password.encode()).hexdigest(), stored
+    )
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -506,10 +539,10 @@ def sync_components_from_main_api():
     """
     main_api_url = os.getenv("MAIN_API_URL", "http://backend:8000")
     try:
-        with urllib.request.urlopen(
-            f"{main_api_url}/api/components", timeout=5
-        ) as resp:
-            data = json.loads(resp.read())
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(f"{main_api_url}/api/components")
+            resp.raise_for_status()
+            data = resp.json()
         components_live = data.get("components", [])
     except Exception as exc:
         raise HTTPException(

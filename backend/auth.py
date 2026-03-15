@@ -12,16 +12,17 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 API_KEY = os.getenv("API_KEY", "")
 
-# Paths that are always public — checked by prefix so /docs, /docs/oauth2-redirect, etc. all pass
-PUBLIC_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/health", "/api/health", "/")
+# Exact-match paths (O(1) set lookup)
+_PUBLIC_EXACT: frozenset[str] = frozenset({"/", "/health", "/api/health"})
+# Prefix paths — docs, openapi, etc. (checked sequentially, short list)
+_PUBLIC_PREFIXES: tuple[str, ...] = ("/docs", "/redoc", "/openapi.json")
 
 
 def _is_public(path: str) -> bool:
     """Return True if the request path should bypass API key auth."""
-    return any(
-        path == prefix or path.startswith(prefix + "/") or path.startswith(prefix + "?")
-        for prefix in PUBLIC_PREFIXES
-    )
+    if path in _PUBLIC_EXACT:
+        return True
+    return any(path.startswith(p) for p in _PUBLIC_PREFIXES)
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):

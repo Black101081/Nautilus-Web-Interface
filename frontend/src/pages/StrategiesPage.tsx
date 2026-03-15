@@ -18,10 +18,12 @@ interface Strategy {
 export default function StrategiesPage() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newStrategy, setNewStrategy] = useState({
     name: '',
-    type: 'momentum',
+    type: 'sma_crossover',
     description: '',
     config: {}
   });
@@ -34,21 +36,23 @@ export default function StrategiesPage() {
     try {
       const data = await api.get<{ strategies: Strategy[] }>('/api/strategies');
       setStrategies(data.strategies || []);
+      setFetchError(null);
     } catch (error) {
-      console.error('Failed to fetch strategies:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to load strategies');
     } finally {
       setLoading(false);
     }
   };
 
   const handleAddStrategy = async () => {
+    setModalError(null);
     try {
       await api.post('/api/strategies', newStrategy);
       setShowAddModal(false);
-      setNewStrategy({ name: '', type: 'momentum', description: '', config: {} });
+      setNewStrategy({ name: '', type: 'sma_crossover', description: '', config: {} });
       fetchStrategies();
     } catch (error) {
-      console.error('Failed to add strategy:', error);
+      setModalError(error instanceof Error ? error.message : 'Failed to add strategy');
     }
   };
 
@@ -57,7 +61,7 @@ export default function StrategiesPage() {
       await api.post(`/api/strategies/${strategyId}/start`);
       fetchStrategies();
     } catch (error) {
-      console.error('Failed to start strategy:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to start strategy');
     }
   };
 
@@ -66,7 +70,7 @@ export default function StrategiesPage() {
       await api.post(`/api/strategies/${strategyId}/stop`);
       fetchStrategies();
     } catch (error) {
-      console.error('Failed to stop strategy:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to stop strategy');
     }
   };
 
@@ -76,7 +80,7 @@ export default function StrategiesPage() {
       await api.delete(`/api/strategies/${strategyId}`);
       fetchStrategies();
     } catch (error) {
-      console.error('Failed to delete strategy:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to delete strategy');
     }
   };
 
@@ -91,6 +95,11 @@ export default function StrategiesPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
       <div className="max-w-7xl mx-auto">
+        {fetchError && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+            {fetchError}
+          </div>
+        )}
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
@@ -220,11 +229,8 @@ export default function StrategiesPage() {
                     onChange={(e) => setNewStrategy({ ...newStrategy, type: e.target.value })}
                     className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
                   >
-                    <option value="momentum">Momentum</option>
-                    <option value="mean_reversion">Mean Reversion</option>
-                    <option value="arbitrage">Arbitrage</option>
-                    <option value="market_making">Market Making</option>
-                    <option value="custom">Custom</option>
+                    <option value="sma_crossover">SMA Crossover</option>
+                    <option value="rsi">RSI</option>
                   </select>
                 </div>
 
@@ -240,9 +246,14 @@ export default function StrategiesPage() {
                 </div>
               </div>
 
+              {modalError && (
+                <div className="mt-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">
+                  {modalError}
+                </div>
+              )}
               <div className="flex gap-4 mt-6">
                 <button
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => { setShowAddModal(false); setModalError(null); }}
                   className="flex-1 px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold"
                 >
                   Cancel

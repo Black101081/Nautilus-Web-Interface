@@ -34,11 +34,22 @@ async def get_risk_metrics():
         if results.get("sharpe_ratio", 0.0) > sharpe_ratio:
             sharpe_ratio = results["sharpe_ratio"]
 
+    # Calculate total_exposure from open DB positions (qty * entry_price)
+    open_positions = await database.list_db_positions(open_only=True)
+    total_exposure = sum(
+        float(p.get("quantity", 0)) * float(p.get("entry_price") or 0)
+        for p in open_positions
+    )
+
+    # Simplified 95% VaR estimate: exposure * max_drawdown% * 1.65 (normal 95th percentile)
+    var_95 = total_exposure * (max_drawdown / 100.0) * 1.65 if total_exposure > 0 else 0.0
+
     return {
-        "total_exposure": 0.0,
-        "var_95": 0.0,
+        "total_exposure": round(total_exposure, 2),
+        "var_95": round(var_95, 2),
         "max_drawdown": max_drawdown,
         "sharpe_ratio": sharpe_ratio,
         "total_pnl": total_pnl,
         "total_trades": total_trades,
+        "open_positions": len(open_positions),
     }

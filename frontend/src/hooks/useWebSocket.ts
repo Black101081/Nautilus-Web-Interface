@@ -27,6 +27,7 @@ interface UseWebSocketReturn {
 
 const MIN_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 30_000;
+const MAX_RECONNECT_ATTEMPTS = 10;
 
 export function useWebSocket(): UseWebSocketReturn {
   const [lastMessage, setLastMessage] = useState<WsMessage | null>(null);
@@ -35,6 +36,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const shouldReconnect = useRef(true);
   const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelay = useRef(MIN_DELAY_MS);
+  const reconnectAttempts = useRef(0);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -45,8 +47,9 @@ export function useWebSocket(): UseWebSocketReturn {
 
     ws.onopen = () => {
       setConnected(true);
-      // Reset backoff on successful connection
+      // Reset backoff and attempt counter on successful connection
       reconnectDelay.current = MIN_DELAY_MS;
+      reconnectAttempts.current = 0;
     };
 
     ws.onmessage = (event) => {
@@ -62,9 +65,14 @@ export function useWebSocket(): UseWebSocketReturn {
       setConnected(false);
       wsRef.current = null;
       if (shouldReconnect.current) {
+        if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+          console.warn(`[WS] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Giving up.`);
+          return;
+        }
+        reconnectAttempts.current += 1;
         const delay = reconnectDelay.current;
+        console.info(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})`);
         reconnectTimeout.current = setTimeout(() => {
-          // Exponential backoff: double delay up to MAX
           reconnectDelay.current = Math.min(delay * 2, MAX_DELAY_MS);
           connect();
         }, delay);
@@ -88,8 +96,9 @@ export function useWebSocket(): UseWebSocketReturn {
   }, [connect]);
 
   const reconnect = useCallback(() => {
-    // Manual reconnect resets the backoff delay
+    // Manual reconnect resets the backoff delay and attempt counter
     reconnectDelay.current = MIN_DELAY_MS;
+    reconnectAttempts.current = 0;
     wsRef.current?.close();
     connect();
   }, [connect]);

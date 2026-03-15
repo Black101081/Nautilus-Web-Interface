@@ -29,6 +29,7 @@ async function request<T>(
   path: string,
   body?: unknown,
   retries = 2,
+  timeoutMs = API_CONFIG.TIMEOUT,
 ): Promise<T> {
   const url = `${API_CONFIG.NAUTILUS_API_URL}${path}`;
   const headers: Record<string, string> = {
@@ -38,11 +39,14 @@ async function request<T>(
 
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, {
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -64,6 +68,8 @@ async function request<T>(
     } catch (err) {
       if (err instanceof ApiError && err.status < 500) throw err;
       lastError = err;
+    } finally {
+      clearTimeout(timer);
     }
 
     // Exponential backoff before retry (skip after last attempt)
@@ -72,7 +78,7 @@ async function request<T>(
     }
   }
 
-  throw lastError;
+  throw lastError ?? new Error('Request failed');
 }
 
 const api = {

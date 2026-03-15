@@ -21,6 +21,7 @@ export default function RiskPage() {
   const [metrics, setMetrics] = useState<RiskMetrics | null>(null);
   const [limits, setLimits] = useState<RiskLimits | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [editingLimits, setEditingLimits] = useState(false);
   const [newLimits, setNewLimits] = useState<RiskLimits>({
     max_order_size: 10000,
@@ -45,7 +46,7 @@ export default function RiskPage() {
       setLimits(limitsData);
       setNewLimits(limitsData);
     } catch (error) {
-      console.error('Failed to fetch risk data:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to load risk data');
     } finally {
       setLoading(false);
     }
@@ -57,7 +58,7 @@ export default function RiskPage() {
       setEditingLimits(false);
       fetchData();
     } catch (error) {
-      console.error('Failed to update limits:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to update limits');
     }
   };
 
@@ -90,7 +91,7 @@ export default function RiskPage() {
             <p className="text-gray-600">Monitor and control trading risk</p>
           </div>
           <button
-            onClick={() => window.location.href = '/admin'}
+            onClick={() => window.location.href = '/trader'}
             className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
           >
             ← Back to Dashboard

@@ -15,7 +15,7 @@ class OrderCreateRequest(BaseModel):
     instrument: str = Field("EUR/USD.SIM", min_length=1, max_length=50)
     side: str = Field("BUY", pattern="^(BUY|SELL)$")
     type: str = Field("MARKET", pattern="^(MARKET|LIMIT|STOP)$")
-    quantity: float = Field(0.0, ge=0)
+    quantity: float = Field(..., gt=0)
     price: Optional[float] = Field(None, ge=0)
 
 
@@ -32,7 +32,7 @@ async def list_orders():
 
     db_orders = await database.list_orders()
     all_orders.extend(db_orders)
-    return {"orders": all_orders[:100], "count": len(all_orders)}
+    return {"orders": all_orders, "count": len(all_orders)}
 
 
 @router.post("/orders")

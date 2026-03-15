@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../lib/api';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 interface Position {
   id: string;
@@ -7,33 +8,50 @@ interface Position {
   side: 'LONG' | 'SHORT';
   quantity: number;
   entry_price: number;
-  current_price: number;
-  unrealized_pnl: number;
-  realized_pnl: number;
+  current_price?: number;
+  pnl?: number;
+  unrealized_pnl?: number;
+  realized_pnl?: number;
   timestamp: string;
 }
 
 export default function PositionsPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [totalPnL, setTotalPnL] = useState(0);
+  const { lastMessage } = useWebSocket();
+  const prevMessageRef = useRef(lastMessage);
 
   useEffect(() => {
     fetchPositions();
-    const interval = setInterval(fetchPositions, 3000); // Refresh every 3s
-    return () => clearInterval(interval);
   }, []);
+
+  // Refresh on live_data WebSocket push instead of polling
+  useEffect(() => {
+    if (lastMessage && lastMessage !== prevMessageRef.current) {
+      prevMessageRef.current = lastMessage;
+      if (lastMessage.type === 'live_data') {
+        fetchPositions();
+      }
+    }
+  }, [lastMessage]);
+
+  const getPositionPnl = (pos: Position): number => {
+    if (pos.pnl != null) return pos.pnl;
+    return (pos.unrealized_pnl ?? 0) + (pos.realized_pnl ?? 0);
+  };
 
   const fetchPositions = async () => {
     try {
       const data = await api.get<{ positions: Position[] }>('/api/positions');
-      setPositions(data.positions || []);
-      const total = (data.positions || []).reduce((sum: number, pos: Position) =>
-        sum + pos.unrealized_pnl + pos.realized_pnl, 0
-      );
+      const rows = data.positions || [];
+      setPositions(rows);
+      const total = rows.reduce((sum: number, pos: Position) => sum + getPositionPnl(pos), 0);
       setTotalPnL(total);
+      setFetchError(null);
     } catch (error) {
-      console.error('Failed to fetch positions:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to load positions');
     } finally {
       setLoading(false);
     }
@@ -45,7 +63,7 @@ export default function PositionsPage() {
       await api.post(`/api/positions/${positionId}/close`);
       fetchPositions();
     } catch (error) {
-      console.error('Failed to close position:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to close position');
     }
   };
 
@@ -68,6 +86,11 @@ export default function PositionsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
       <div className="max-w-7xl mx-auto">
+        {fetchError && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+            {fetchError}
+          </div>
+        )}
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
@@ -136,8 +159,7 @@ export default function PositionsPage() {
                     <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Quantity</th>
                     <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Entry Price</th>
                     <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Current Price</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Unrealized P&L</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Realized P&L</th>
+                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">P&L</th>
                     <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase">Actions</th>
                   </tr>
                 </thead>
@@ -153,15 +175,12 @@ export default function PositionsPage() {
                       </td>
                       <td className="px-6 py-4 text-sm text-right text-gray-900">{position.quantity}</td>
                       <td className="px-6 py-4 text-sm text-right text-gray-900">${position.entry_price.toFixed(2)}</td>
-                      <td className="px-6 py-4 text-sm text-right text-gray-900">${position.current_price.toFixed(2)}</td>
-                      <td className="px-6 py-4 text-sm text-right">
-                        <span className={`font-bold ${getPnLColor(position.unrealized_pnl)}`}>
-                          ${position.unrealized_pnl.toFixed(2)}
-                        </span>
+                      <td className="px-6 py-4 text-sm text-right text-gray-900">
+                        {position.current_price != null ? `$${position.current_price.toFixed(2)}` : '-'}
                       </td>
                       <td className="px-6 py-4 text-sm text-right">
-                        <span className={`font-bold ${getPnLColor(position.realized_pnl)}`}>
-                          ${position.realized_pnl.toFixed(2)}
+                        <span className={`font-bold ${getPnLColor(getPositionPnl(position))}`}>
+                          ${getPositionPnl(position).toFixed(2)}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">
