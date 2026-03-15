@@ -181,6 +181,10 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
     if strategy_type not in _STRATEGY_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown strategy type: {strategy_type}")
 
+    name = body.get("name", "")
+    if not name or not str(name).strip():
+        raise HTTPException(status_code=422, detail="'name' is required and must not be empty")
+
     # SMA period validation
     if strategy_type == "sma_crossover":
         fast = int(body.get("fast_period", 10))
@@ -193,7 +197,6 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
 
     defaults = _STRATEGY_TYPES[strategy_type]["default_config"].copy()
     sid = body.get("id") or f"STR-{uuid.uuid4().hex[:8].upper()}"
-    name = body.get("name", "New Strategy")
     description = body.get("description", _STRATEGY_TYPES[strategy_type]["description"])
 
     # Build config from request body, falling back to defaults
