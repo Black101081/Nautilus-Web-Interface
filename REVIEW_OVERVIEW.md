@@ -10,18 +10,256 @@
 
 ## 1. TỔNG QUAN HỆ THỐNG
 
-| Mục | Giá trị |
+### 1.1 Stack kỹ thuật
+
+| Layer | Công nghệ | Ghi chú |
+|---|---|---|
+| **Frontend** | React + TypeScript | Wouter routing, Tailwind CSS, shadcn/ui components |
+| **Backend** | FastAPI + Python 3.11 | asyncio, aiosqlite, uvicorn |
+| **Database** | SQLite (`nautilus.db`) | 7 tables, aiosqlite async driver |
+| **Nautilus Core** | `BacktestEngine` ✅ · `LiveTradingNode` ❌ | Live trading chưa integrate |
+| **Market Data** | Binance public REST API | Cache 5s TTL per symbol, fallback hardcoded |
+| **WebSocket** | FastAPI native WS | Heartbeat + push mỗi 3s, broadcast events |
+| **Auth** | localStorage API key | Basic only — không phải production auth |
+| **Monitoring** | psutil | CPU, Memory, Disk, Uptime |
+
+### 1.2 Sơ đồ kiến trúc tổng thể
+
+```
+Browser (React)
+    │
+    ├── HTTP REST ──────────→ FastAPI Backend
+    │   (50+ endpoints)           │
+    │                             ├── routers/
+    │                             │     ├── strategies.py
+    │                             │     ├── backtest.py
+    │                             │     ├── orders.py
+    │                             │     ├── positions.py
+    │                             │     ├── risk.py
+    │                             │     ├── alerts.py
+    │                             │     ├── market_data.py
+    │                             │     ├── adapters.py  ← Fake (DB only)
+    │                             │     ├── system.py
+    │                             │     ├── components.py
+    │                             │     └── database_ops.py
+    │                             │
+    └── WebSocket /ws ──────→    ├── SQLite (nautilus.db)
+        (live push 3s)            │
+                                  ├── NautilusTradingSystem (singleton)
+                                  │     ├── BacktestEngine ✅ (real)
+                                  │     └── LiveTradingNode ❌ (missing)
+                                  │
+                                  └── External APIs
+                                        ├── Binance REST (market data) ✅
+                                        └── Exchange adapters ❌ (not connected)
+```
+
+### 1.3 Database Schema (7 tables)
+
+| Table | Mục đích | Dữ liệu thật? |
+|---|---|:---:|
+| `orders` | Lịch sử orders (từ backtest + user tạo) | ⚠️ Hybrid |
+| `positions` | Positions mở/đóng | ⚠️ Hybrid |
+| `strategies` | Config + status strategies | ✅ Thật |
+| `alerts` | Price alerts, trigger status | ✅ Thật |
+| `adapter_configs` | Credentials + status adapters | ⚠️ Credentials plaintext |
+| `component_states` | Status các engine components | ❌ DB-only, không thật |
+| `kv_store` | Key-value cho settings + risk limits | ✅ Thật |
+
+```sql
+-- orders: id, instrument, side, type, quantity, price, status, filled_qty, pnl, timestamp
+-- positions: id, instrument, side, quantity, entry_price, exit_price, pnl, is_open, strategy_id
+-- strategies: id, name, type, status, description, config(JSON), created_at
+-- alerts: id, symbol, condition, price, message, status, created_at, triggered_at
+-- adapter_configs: adapter_id, api_key(!), api_secret(!), status, last_connected
+-- component_states: component_id, status, updated_at
+-- kv_store: namespace, key, value
+```
+
+### 1.4 Inventory 23 Pages
+
+#### Trader Panel (10 pages)
+
+| Page | Route | Chức năng | Trạng thái |
+|---|---|---|:---:|
+| TraderDashboard | `/trader` | Tổng quan: counters, components, risk metrics, WS live | ✅ |
+| StrategiesPage | `/trader/strategies` | CRUD SMA/RSI strategies, start/stop | ⚠️ |
+| OrdersPage | `/trader/orders` | Tạo/xem/cancel orders | ⚠️ |
+| PositionsPage | `/trader/positions` | Xem positions + live P&L | ⚠️ |
+| BacktestingPage | `/trader/backtesting` | Demo + Real backtest, equity curve | ✅ |
+| RiskPage | `/trader/risk` | Xem/sửa risk limits | ⚠️ |
+| MarketDataPage | `/trader/market-data` | 6 crypto prices live | ✅ |
+| PerformancePage | `/trader/performance` | P&L summary, metrics | ✅ |
+| AlertsPage | `/trader/alerts` | Price alerts CRUD + auto-trigger | ✅ |
+| _(other)_ | `/trader/*` | Navigation pages | — |
+
+#### Admin Panel (10 pages)
+
+| Page | Route | Chức năng | Trạng thái |
+|---|---|---|:---:|
+| AdminDashboard | `/admin` | Stats, quick links | ✅ |
+| AdaptersPage | `/admin/adapters` | Kết nối 11 exchanges | ❌ |
+| ComponentsPage | `/admin/components` | Start/stop engine components | ❌ |
+| MonitoringPage | `/admin/monitoring` | CPU/Mem/Disk live metrics | ✅ |
+| SettingsPage | `/admin/settings` | Config hệ thống, notification | ⚠️ |
+| DatabasePage | `/admin/database` | Backup/restore/optimize | ✅ |
+| ApiConfigPage | `/admin/api-config` | API key management | ⚠️ |
+| DatabaseMgmtPage | `/admin/db-management` | Database tools | ✅ |
+
+#### Shared (3 pages)
+
+| Page | Route |
 |---|---|
-| Frontend | React + TypeScript, Wouter routing, Tailwind CSS, shadcn/ui |
-| Backend | FastAPI + Python, asyncio, aiosqlite |
-| Nautilus tích hợp | `BacktestEngine` (thật), `LiveTradingNode` (CHƯA CÓ) |
-| Database | SQLite (`nautilus.db`) — 7 tables |
-| Market data | Binance public REST API (cache 5s) |
-| WebSocket | FastAPI WS — heartbeat + push 3s |
-| Auth | localStorage API key (basic) |
-| Tests | 59 unit tests — 59/59 pass |
-| API Endpoints | ~50+ endpoints |
-| Pages | 23 pages (Trader + Admin) |
+| Home | `/` — landing page, chọn Trader/Admin panel |
+| LoginPage | — auth form |
+| NotFound | `/404` |
+
+### 1.5 Inventory API Endpoints (50+)
+
+#### Strategies (`/api`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `/strategy-types` | GET | ✅ Real |
+| `/strategies` | GET | ✅ Real |
+| `/strategies` | POST | ✅ Real |
+| `/strategies/{id}` | DELETE | ✅ Real |
+| `/strategies/{id}/start` | POST | ⚠️ DB-only |
+| `/strategies/{id}/stop` | POST | ⚠️ DB-only |
+| `/nautilus/strategies` | GET | ✅ Real |
+| `/nautilus/strategies` | POST | ✅ Real |
+| `/nautilus/strategies/{id}` | GET | ✅ Real |
+
+#### Backtest (`/api/nautilus`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `/backtest` | POST | ✅ Real |
+| `/backtest/{id}` | GET | ✅ Real |
+| `/demo-backtest` | POST | ✅ Real |
+| `/system-info` | GET | ✅ Real |
+| `/initialize` | POST | ✅ Real |
+
+#### Orders & Positions (`/api`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `/orders` | GET | ⚠️ Hybrid |
+| `/orders` | POST | ❌ Simulated |
+| `/orders/{id}` | DELETE | ❌ DB-only |
+| `/positions` | GET | ⚠️ Hybrid |
+| `/positions/{id}/close` | POST | ❌ DB-only |
+
+#### Risk (`/api/risk`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `/limits` | GET | ✅ Real |
+| `/limits` | POST | ⚠️ Save only, not enforced |
+| `/metrics` | GET | ⚠️ Calculated, not live |
+
+#### Market Data (`/api/market-data`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `/instruments` | GET | ✅ Real (Binance) |
+| `/{symbol}` | GET | ✅ Real (Binance) |
+
+#### Alerts (`/api/alerts`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `` | GET | ✅ Real |
+| `` | POST | ✅ Real |
+| `/{id}/dismiss` | PUT | ✅ Real |
+| `/{id}` | DELETE | ✅ Real |
+
+#### System (`/api`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `/health` | GET | ✅ Real |
+| `/engine/info` | GET | ✅ Real |
+| `/engine/initialize` | POST | ✅ Real |
+| `/engine/shutdown` | POST | ❌ No-op stub |
+| `/components` | GET | ⚠️ DB-based |
+| `/system/metrics` | GET | ✅ Real (psutil) |
+| `/settings` | GET | ✅ Real |
+| `/settings` | POST | ✅ Real |
+| `/performance/summary` | GET | ✅ Real |
+| `/trades` | GET | ✅ Real |
+| `/instruments` | GET | ⚠️ Catalog or defaults |
+
+#### Adapters (`/api`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `/adapters` | GET | ✅ Real UI |
+| `/adapters/{id}` | GET | ✅ Real UI |
+| `/adapters/{id}/connect` | POST | ❌ DB-only (no real WS) |
+| `/adapters/{id}/disconnect` | POST | ❌ DB-only |
+
+#### Components (`/api/component`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `/status` | GET | ⚠️ DB-based |
+| `/start` | POST | ❌ DB-only |
+| `/stop` | POST | ❌ DB-only |
+| `/restart` | POST | ❌ DB-only |
+| `/configure` | POST | ❌ DB-only |
+
+#### Database Ops (`/api/database`)
+| Endpoint | Method | Status |
+|---|:---:|:---:|
+| `/backup` | POST | ✅ Real |
+| `/backups` | GET | ✅ Real |
+| `/restore` | POST | ✅ Real |
+| `/optimize` | POST | ✅ Real |
+| `/clean` | POST | ✅ Real |
+
+### 1.6 Phân loại Real / Hybrid / Fake toàn hệ thống
+
+#### ✅ FULLY REAL (dùng tốt ngay)
+- `BacktestEngine` — real Nautilus integration, synthetic + catalog data
+- Strategy execution (SMA Crossover, RSI) trong backtest
+- Binance market data (REST public, cache 5s)
+- Alert monitor + WebSocket trigger
+- System metrics (psutil: CPU, Memory, Disk)
+- Database persistence (SQLite, backup, restore, optimize)
+- Risk limit save/read
+
+#### ⚠️ HYBRID (một phần thật)
+- Orders — backtest orders là thật, user-created là simulated
+- Positions — từ backtest + live price enrichment
+- Strategy start/stop — DB status đúng, engine registration chưa có
+- Risk metrics — calculated từ backtest results, không phải live
+
+#### ❌ FAKE / STUB (không làm gì thật)
+- Adapter connect/disconnect — chỉ lưu text vào DB
+- Test connection — chỉ đọc DB
+- Order fill simulation — instant fill, không qua exchange
+- Component start/stop — chỉ đổi DB status
+- Email/Telegram notifications — settings có, không gửi
+- 2FA — setting có, không implement
+- Session timeout — setting có, không apply
+- Engine shutdown — no-op
+
+### 1.7 Điểm mạnh kiến trúc
+
+| # | Điểm mạnh |
+|---|---|
+| 1 | Tích hợp **BacktestEngine thật** — SMA, RSI chạy trên dữ liệu thật |
+| 2 | **Async/await** đúng chuẩn (asyncio + aiosqlite) — không block |
+| 3 | **WebSocket push** cho live UI updates |
+| 4 | **Database persistence** đầy đủ — restart không mất data |
+| 5 | **Hot backup** SQLite không cần dừng server |
+| 6 | **Alert auto-trigger** background task hoạt động thật |
+| 7 | Codebase cấu trúc rõ ràng, routers tách biệt |
+
+### 1.8 Điểm yếu kiến trúc
+
+| # | Điểm yếu | Severity |
+|---|---|:---:|
+| 1 | Không có `LiveTradingNode` — core value proposition missing | 🔴 |
+| 2 | Credentials lưu **plaintext** — security risk | 🔴 |
+| 3 | Auth là localStorage token — không có real session | 🔴 |
+| 4 | Chỉ 2 strategy types (SMA, RSI) — hạn chế người dùng | 🟡 |
+| 5 | Risk limits không được enforce khi tạo order | 🟡 |
+| 6 | Notifications settings không thực thi | 🟡 |
+| 7 | Không có multi-user isolation | 🟡 |
+| 8 | Demo backtest dùng GBM synthetic — không phản ánh thị trường thật | 🟢 |
 
 ---
 
