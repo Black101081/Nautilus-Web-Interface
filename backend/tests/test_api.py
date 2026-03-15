@@ -319,6 +319,160 @@ def test_database_clean(client):
     assert r.json()["success"] is True
 
 
+# ── RSI Strategy ─────────────────────────────────────────────────────────────
+
+def test_create_rsi_strategy(client):
+    payload = {
+        "name": "RSI Test",
+        "type": "rsi",
+        "rsi_period": 14,
+        "oversold_level": 30,
+        "overbought_level": 70,
+    }
+    r = client.post("/api/strategies", json=payload)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    sid = body["strategy_id"]
+
+    r = client.get("/api/strategies")
+    found = [s for s in r.json()["strategies"] if s["id"] == sid]
+    assert found, "RSI strategy not found in list"
+    assert found[0]["type"] == "rsi"
+
+
+def test_rsi_strategy_start_stop(client):
+    r = client.post("/api/strategies", json={"name": "RSI SS", "type": "rsi"})
+    sid = r.json()["strategy_id"]
+
+    r = client.post(f"/api/strategies/{sid}/start")
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+
+    r = client.post(f"/api/strategies/{sid}/stop")
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+
+
+def test_rsi_strategy_status_persists(client):
+    """Status change must survive a DB round-trip."""
+    r = client.post("/api/strategies", json={"name": "RSI Persist", "type": "rsi"})
+    sid = r.json()["strategy_id"]
+
+    client.post(f"/api/strategies/{sid}/start")
+
+    # Re-query the list and verify persisted status
+    r = client.get("/api/strategies")
+    found = [s for s in r.json()["strategies"] if s["id"] == sid]
+    assert found[0]["status"] == "running"
+
+
+# ── Adapter connect / disconnect ──────────────────────────────────────────────
+
+def test_adapter_get_by_id(client):
+    r = client.get("/api/adapters/binance")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == "binance"
+    assert "status" in body
+
+
+def test_adapter_get_unknown(client):
+    r = client.get("/api/adapters/does_not_exist")
+    assert r.status_code == 404
+
+
+def test_adapter_connect(client):
+    payload = {"api_key": "test-key-abc", "api_secret": "test-secret-xyz"}
+    r = client.post("/api/adapters/binance/connect", json=payload)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    assert body["status"] == "connected"
+
+
+def test_adapter_connect_missing_credentials(client):
+    """binance requires api_key AND api_secret — omitting both must 400."""
+    r = client.post("/api/adapters/binance/connect", json={})
+    assert r.status_code == 400
+
+
+def test_adapter_connect_missing_secret(client):
+    """binance requires api_secret too."""
+    r = client.post("/api/adapters/binance/connect", json={"api_key": "only-key"})
+    assert r.status_code == 400
+
+
+def test_adapter_disconnect(client):
+    # Connect first
+    client.post(
+        "/api/adapters/bybit/connect",
+        json={"api_key": "k", "api_secret": "s"},
+    )
+    r = client.post("/api/adapters/bybit/disconnect")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    assert body["status"] == "disconnected"
+
+
+def test_adapter_status_persists_after_connect(client):
+    """After connect, GET /adapters should show status='connected'."""
+    client.post(
+        "/api/adapters/okx/connect",
+        json={"api_key": "mykey", "api_secret": "mysecret"},
+    )
+    r = client.get("/api/adapters/okx")
+    assert r.json()["status"] == "connected"
+
+
+def test_adapter_disconnect_unknown(client):
+    r = client.post("/api/adapters/nonexistent_adapter/disconnect")
+    assert r.status_code == 404
+
+
+# ── Alert triggering logic ────────────────────────────────────────────────────
+
+def test_alert_trigger_marks_status(client):
+    """Create an alert then manually trigger it via DB and verify status."""
+    import asyncio
+    import database
+
+    r = client.post(
+        "/api/alerts",
+        json={"symbol": "BTCUSDT", "condition": "above", "price": 1.0},
+    )
+    alert_id = r.json()["alert"]["id"]
+
+    # Trigger via the new DB function
+    triggered = asyncio.get_event_loop().run_until_complete(
+        database.trigger_alert(alert_id)
+    )
+    assert triggered is True
+
+    # Verify status via list endpoint
+    r = client.get("/api/alerts")
+    found = [a for a in r.json()["alerts"] if a["id"] == alert_id]
+    assert found[0]["status"] == "triggered"
+    assert found[0]["triggered_at"] is not None
+
+
+def test_trigger_already_triggered_alert(client):
+    """Triggering an already-triggered alert must return False (no-op)."""
+    import asyncio
+    import database
+
+    r = client.post(
+        "/api/alerts",
+        json={"symbol": "ETHUSDT", "condition": "below", "price": 99999.0},
+    )
+    alert_id = r.json()["alert"]["id"]
+
+    asyncio.get_event_loop().run_until_complete(database.trigger_alert(alert_id))
+    second = asyncio.get_event_loop().run_until_complete(database.trigger_alert(alert_id))
+    assert second is False  # already triggered, rowcount == 0
+
+
 # ── Auth middleware ───────────────────────────────────────────────────────────
 
 def test_auth_disabled_by_default(client):

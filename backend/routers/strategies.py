@@ -87,20 +87,26 @@ async def load_strategies_from_db() -> None:
         if sid not in nautilus_system.strategies:
             s = _db_row_to_strategy(row)
             nautilus_system.strategies[sid] = s
-            # Register with NautilusTrader engine if SMA type
-            if s["type"] == "sma_crossover":
+            # Register with NautilusTrader engine (SMA and RSI supported)
+            if s["type"] in ("sma_crossover", "rsi"):
                 cfg = s["config"]
                 nautilus_system.create_strategy({
                     "id": sid,
                     "name": s["name"],
-                    "type": "sma_crossover",
+                    "type": s["type"],
+                    # common
                     "instrument_id": cfg.get("instrument_id", "EUR/USD.SIM"),
                     "bar_type": cfg.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
+                    "trade_size": cfg.get("trade_size", "100000"),
+                    # SMA params
                     "fast_period": cfg.get("fast_period", 10),
                     "slow_period": cfg.get("slow_period", 20),
-                    "trade_size": cfg.get("trade_size", "100000"),
+                    # RSI params
+                    "rsi_period": cfg.get("rsi_period", 14),
+                    "oversold_level": cfg.get("oversold_level", 30.0),
+                    "overbought_level": cfg.get("overbought_level", 70.0),
                 })
-                # Restore the persisted status after create (create sets to 'active')
+                # Restore the persisted status after create (create sets to 'created')
                 if sid in nautilus_system.strategies:
                     nautilus_system.strategies[sid]["status"] = s["status"]
 
@@ -198,30 +204,19 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
     # Persist to DB
     await database.save_strategy(strategy_row)
 
-    # Register in memory for SMA type (nautilus_core only supports SMA today)
-    if strategy_type == "sma_crossover":
-        result = nautilus_system.create_strategy({**config, "name": name, "type": strategy_type})
-        if result.get("success") and result.get("strategy_id"):
-            actual_sid = result["strategy_id"]
-            # If nautilus assigned a different ID, update DB
-            if actual_sid != sid:
-                strategy_row["id"] = actual_sid
-                await database.delete_strategy(sid)
-                await database.save_strategy(strategy_row)
-            if actual_sid in nautilus_system.strategies:
-                nautilus_system.strategies[actual_sid]["description"] = description
-                nautilus_system.strategies[actual_sid]["status"] = "stopped"
-            return {"success": True, "strategy_id": actual_sid, "strategy": strategy_row}
-    else:
-        # For non-SMA types store in memory directly
-        nautilus_system.strategies[sid] = {
-            "id": sid,
-            "name": name,
-            "type": strategy_type,
-            "status": "stopped",
-            "description": description,
-            "config": config,
-        }
+    # Register with Nautilus engine (supports sma_crossover and rsi)
+    result = nautilus_system.create_strategy({**config, "id": sid, "name": name, "type": strategy_type})
+    if result.get("success") and result.get("strategy_id"):
+        actual_sid = result["strategy_id"]
+        # If nautilus assigned a different ID, update DB
+        if actual_sid != sid:
+            strategy_row["id"] = actual_sid
+            await database.delete_strategy(sid)
+            await database.save_strategy(strategy_row)
+        if actual_sid in nautilus_system.strategies:
+            nautilus_system.strategies[actual_sid]["description"] = description
+            nautilus_system.strategies[actual_sid]["status"] = "stopped"
+        return {"success": True, "strategy_id": actual_sid, "strategy": strategy_row}
 
     return {"success": True, "strategy_id": sid, "strategy": strategy_row}
 

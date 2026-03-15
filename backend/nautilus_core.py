@@ -18,8 +18,9 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.model.enums import AccountType, OmsType
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-# Import our real strategy
+# Import our real strategies
 from strategies.sma_crossover import SMACrossoverStrategy, SMACrossoverConfig
+from strategies.rsi_strategy import RSIStrategy, RSIStrategyConfig
 
 
 class NautilusTradingSystem:
@@ -112,37 +113,48 @@ class NautilusTradingSystem:
             strategy_type = config.get("type", "sma_crossover")
             
             if strategy_type == "sma_crossover":
-                # Create real SMA Crossover strategy config
                 strategy_config = SMACrossoverConfig(
                     strategy_id=strategy_id,
                     instrument_id=config.get("instrument_id", "EUR/USD.SIM"),
                     bar_type=config.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
                     fast_period=config.get("fast_period", 10),
                     slow_period=config.get("slow_period", 20),
-                    trade_size=Decimal(str(config.get("trade_size", "100000")))
+                    trade_size=Decimal(str(config.get("trade_size", "100000"))),
                 )
-                
-                # Store strategy info
-                self.strategies[strategy_id] = {
-                    "id": strategy_id,
-                    "name": config.get("name", "SMA Crossover"),
-                    "type": strategy_type,
-                    "config": strategy_config,
-                    "status": "created",
-                    "created_at": datetime.now(timezone.utc).isoformat()
-                }
-                
-                return {
-                    "success": True,
-                    "message": f"Strategy {strategy_id} created",
-                    "strategy_id": strategy_id,
-                    "type": strategy_type
-                }
+                name = config.get("name", "SMA Crossover")
+            elif strategy_type == "rsi":
+                strategy_config = RSIStrategyConfig(
+                    strategy_id=strategy_id,
+                    instrument_id=config.get("instrument_id", "EUR/USD.SIM"),
+                    bar_type=config.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
+                    rsi_period=config.get("rsi_period", 14),
+                    oversold_level=config.get("oversold_level", 30.0),
+                    overbought_level=config.get("overbought_level", 70.0),
+                    trade_size=Decimal(str(config.get("trade_size", "100000"))),
+                )
+                name = config.get("name", "RSI Mean-Reversion")
             else:
                 return {
                     "success": False,
-                    "message": f"Unknown strategy type: {strategy_type}"
+                    "message": f"Unknown strategy type: {strategy_type}",
                 }
+
+            # Store strategy info
+            self.strategies[strategy_id] = {
+                "id": strategy_id,
+                "name": name,
+                "type": strategy_type,
+                "config": strategy_config,
+                "status": "created",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            return {
+                "success": True,
+                "message": f"Strategy {strategy_id} created",
+                "strategy_id": strategy_id,
+                "type": strategy_type,
+            }
                 
         except Exception as e:
             import traceback
@@ -242,8 +254,11 @@ class NautilusTradingSystem:
             # Add data to engine
             engine.add_data(quote_ticks)
             
-            # Create and add strategy
-            strategy = SMACrossoverStrategy(config=strategy_config)
+            # Create and add strategy (dispatch by type)
+            if strategy_info["type"] == "rsi":
+                strategy = RSIStrategy(config=strategy_config)
+            else:
+                strategy = SMACrossoverStrategy(config=strategy_config)
             engine.add_strategy(strategy=strategy)
             
             # Run backtest

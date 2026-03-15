@@ -48,13 +48,20 @@ export default function AdaptersPage() {
   const [filterCategory, setFilterCategory] = useState<string>('All');
 
   useEffect(() => {
-    api.get<{ adapters: Adapter[] }>('/api/adapters')
+    api.get<{ adapters: (Adapter & { status: string; has_credentials: boolean })[] }>('/api/adapters')
       .then(data => {
-        const list: Adapter[] = data.adapters ?? [];
+        const list = data.adapters ?? [];
         setAdapters(list);
         const initial: Record<string, AdapterState> = {};
         list.forEach(a => {
-          initial[a.id] = { connected: false, apiKey: '', apiSecret: '', endpoint: '', testnet: false };
+          // Restore connected status and credential hint from backend
+          initial[a.id] = {
+            connected: a.status === 'connected',
+            apiKey: a.has_credentials ? '••••••••' : '',
+            apiSecret: '',
+            endpoint: '',
+            testnet: false,
+          };
         });
         setStates(initial);
       })
@@ -64,31 +71,74 @@ export default function AdaptersPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const toggleConnect = (adapter: Adapter) => {
+  const toggleConnect = async (adapter: Adapter) => {
     const current = states[adapter.id]?.connected ?? false;
-    info(`${current ? 'Disconnecting' : 'Connecting'} ${adapter.name}…`);
-    setTimeout(() => {
-      setStates(prev => ({ ...prev, [adapter.id]: { ...prev[adapter.id], connected: !current } }));
-      success(`${adapter.name} ${current ? 'disconnected' : 'connected'} successfully`);
-    }, 900);
+    if (current) {
+      // Disconnect
+      info(`Disconnecting ${adapter.name}…`);
+      try {
+        await api.post(`/api/adapters/${adapter.id}/disconnect`, {});
+        setStates(prev => ({ ...prev, [adapter.id]: { ...prev[adapter.id], connected: false } }));
+        success(`${adapter.name} disconnected`);
+      } catch {
+        notifyError(`Failed to disconnect ${adapter.name}`);
+      }
+    } else {
+      // If no credentials saved yet, open config panel instead
+      const state = states[adapter.id];
+      if (!state?.apiKey || state.apiKey === '••••••••') {
+        setConfigOpen(adapter.id);
+        info(`Enter API credentials for ${adapter.name} first`);
+      } else {
+        // Credentials already in form — connect directly
+        await saveConfig(adapter.id);
+      }
+    }
   };
 
-  const testConnection = (adapter: Adapter) => {
+  const testConnection = async (adapter: Adapter) => {
     setTesting(adapter.id);
     info(`Testing ${adapter.name} connection…`);
-    setTimeout(() => {
-      setTesting(null);
-      if (states[adapter.id]?.connected) {
-        success(`${adapter.name}: connection test passed ✔`);
+    try {
+      const res = await api.get<{ status: string }>(`/api/adapters/${adapter.id}`);
+      if (res.status === 'connected') {
+        success(`${adapter.name}: connection test passed`);
       } else {
         notifyError(`${adapter.name}: not connected – configure API keys first`);
       }
-    }, 1400);
+    } catch {
+      notifyError(`${adapter.name}: test failed`);
+    } finally {
+      setTesting(null);
+    }
   };
 
-  const saveConfig = (adapterId: string) => {
-    setConfigOpen(null);
-    success('Configuration saved');
+  const saveConfig = async (adapterId: string) => {
+    const state = states[adapterId];
+    const apiKey = state?.apiKey && state.apiKey !== '••••••••' ? state.apiKey : undefined;
+    const apiSecret = state?.apiSecret || undefined;
+
+    if (!apiKey && !apiSecret) {
+      notifyError('Enter at least an API key before connecting');
+      return;
+    }
+
+    info('Connecting…');
+    try {
+      await api.post(`/api/adapters/${adapterId}/connect`, {
+        api_key: apiKey,
+        api_secret: apiSecret || null,
+      });
+      setStates(prev => ({
+        ...prev,
+        [adapterId]: { ...prev[adapterId], connected: true, apiKey: '••••••••', apiSecret: '' },
+      }));
+      setConfigOpen(null);
+      success('Adapter connected and credentials saved');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Connection failed';
+      notifyError(msg);
+    }
   };
 
   const categories = ['All', ...Array.from(new Set(adapters.map(a => a.category)))];
@@ -206,7 +256,7 @@ export default function AdaptersPage() {
                   {/* Actions */}
                   <div className="flex gap-2">
                     <button
-                      onClick={() => toggleConnect(adapter)}
+                      onClick={() => void toggleConnect(adapter)}
                       className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                         isConnected
                           ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
@@ -216,7 +266,7 @@ export default function AdaptersPage() {
                       {isConnected ? 'Disconnect' : 'Connect'}
                     </button>
                     <button
-                      onClick={() => testConnection(adapter)}
+                      onClick={() => void testConnection(adapter)}
                       disabled={isTesting}
                       className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                     >
@@ -264,10 +314,10 @@ export default function AdaptersPage() {
                         <label htmlFor={`testnet-${adapter.id}`} className="text-xs text-gray-600">Use testnet/paper trading</label>
                       </div>
                       <button
-                        onClick={() => saveConfig(adapter.id)}
+                        onClick={() => void saveConfig(adapter.id)}
                         className="w-full py-1.5 bg-cyan-600 text-white rounded-lg text-xs font-semibold hover:bg-cyan-700"
                       >
-                        Save Configuration
+                        Connect &amp; Save
                       </button>
                     </div>
                   )}

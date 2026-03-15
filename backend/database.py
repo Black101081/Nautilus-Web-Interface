@@ -122,6 +122,15 @@ async def init_db() -> None:
                 status          TEXT NOT NULL DEFAULT 'stopped',
                 updated_at      TEXT NOT NULL
             );
+
+            CREATE INDEX IF NOT EXISTS idx_orders_status    ON orders(status);
+            CREATE INDEX IF NOT EXISTS idx_orders_timestamp ON orders(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_alerts_symbol    ON alerts(symbol);
+            CREATE INDEX IF NOT EXISTS idx_alerts_status    ON alerts(status);
+            CREATE INDEX IF NOT EXISTS idx_strategies_status     ON strategies(status);
+            CREATE INDEX IF NOT EXISTS idx_strategies_created_at ON strategies(created_at);
+            CREATE INDEX IF NOT EXISTS idx_positions_is_open     ON positions(is_open);
+            CREATE INDEX IF NOT EXISTS idx_positions_strategy_id ON positions(strategy_id);
             """
         )
         await db.commit()
@@ -238,6 +247,29 @@ async def create_alert(
         )
         await db.commit()
     return alert
+
+
+async def list_active_alerts() -> List[Dict[str, Any]]:
+    """Return only alerts with status='active' (not yet triggered)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM alerts WHERE status='active' ORDER BY created_at DESC"
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def trigger_alert(alert_id: str) -> bool:
+    """Mark alert as triggered with current timestamp. Returns True if updated."""
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE alerts SET status='triggered', triggered_at=? WHERE id=? AND status='active'",
+            (now, alert_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 async def delete_alert(alert_id: str) -> bool:

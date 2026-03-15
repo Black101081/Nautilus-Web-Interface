@@ -36,6 +36,7 @@ from routers import (
 from routers.strategies import load_strategies_from_db
 from routers.components import load_component_states
 from state import manager, nautilus_system
+from alert_monitor import run_alert_monitor
 
 
 # ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
@@ -47,8 +48,15 @@ async def lifespan(app: FastAPI):
     # Restore persisted strategies and component states
     await load_strategies_from_db()
     await load_component_states()
+    # Start background alert monitor
+    alert_task = asyncio.create_task(run_alert_monitor())
     yield
-    # Shutdown: nothing to clean up
+    # Shutdown: cancel background tasks
+    alert_task.cancel()
+    try:
+        await alert_task
+    except asyncio.CancelledError:
+        pass
 
 
 # ── App factory ───────────────────────────────────────────────────────────────
