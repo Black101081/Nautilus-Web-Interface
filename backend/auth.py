@@ -5,14 +5,14 @@ If API_KEY is not set, authentication is disabled (development mode).
 """
 
 import os
-from fastapi import Request, HTTPException
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 API_KEY = os.getenv("API_KEY", "")
 
-# Paths that are always public (no auth required)
-PUBLIC_PATHS = {"/api/health", "/docs", "/openapi.json", "/redoc"}
+# Paths whose prefixes are always public (no auth required)
+PUBLIC_PREFIXES = ["/api/health", "/health", "/docs", "/openapi.json", "/redoc"]
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
@@ -23,8 +23,8 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if not API_KEY:
             return await call_next(request)
 
-        # Skip auth for public paths
-        if request.url.path in PUBLIC_PATHS:
+        # Skip auth for public path prefixes (handles trailing slashes, sub-paths)
+        if any(request.url.path.startswith(p) for p in PUBLIC_PREFIXES):
             return await call_next(request)
 
         # Skip OPTIONS (CORS preflight)
