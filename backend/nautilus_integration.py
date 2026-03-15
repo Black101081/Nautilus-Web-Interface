@@ -6,7 +6,7 @@ Wraps Nautilus Trader functionality for the Admin Web Interface
 import os
 import uuid
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 
 # Nautilus Trader imports
@@ -258,7 +258,7 @@ class NautilusManager:
                     "total_trades": 0,
                     "win_rate": 0.0
                 },
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat()
             }
 
             return {
@@ -293,7 +293,7 @@ class NautilusManager:
             return {"success": False, "message": "Engine not running. Initialize engine first."}
 
         self.strategies[strategy_id]["status"] = "running"
-        self.strategies[strategy_id]["started_at"] = datetime.utcnow().isoformat()
+        self.strategies[strategy_id]["started_at"] = datetime.now(timezone.utc).isoformat()
 
         return {"success": True, "message": f"Strategy {strategy_id} started"}
 
@@ -303,7 +303,7 @@ class NautilusManager:
             return {"success": False, "message": f"Strategy {strategy_id} not found"}
 
         self.strategies[strategy_id]["status"] = "stopped"
-        self.strategies[strategy_id]["stopped_at"] = datetime.utcnow().isoformat()
+        self.strategies[strategy_id]["stopped_at"] = datetime.now(timezone.utc).isoformat()
 
         return {"success": True, "message": f"Strategy {strategy_id} stopped"}
 
@@ -332,7 +332,7 @@ class NautilusManager:
             "price": float(order_data.get("price", 0)) if order_data.get("price") else None,
             "status": "PENDING",
             "filled_qty": 0.0,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         self.orders[order_id] = order
 
@@ -372,7 +372,7 @@ class NautilusManager:
                 "current_price": fill_price,
                 "unrealized_pnl": 0.0,
                 "realized_pnl": 0.0,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "is_open": True,
             }
         else:
@@ -417,7 +417,7 @@ class NautilusManager:
         pos["realized_pnl"] += pos.get("unrealized_pnl", 0.0)
         pos["unrealized_pnl"] = 0.0
         pos["is_open"] = False
-        pos["closed_at"] = datetime.utcnow().isoformat()
+        pos["closed_at"] = datetime.now(timezone.utc).isoformat()
 
         return {"success": True, "message": f"Position {position_id} closed", "realized_pnl": pos["realized_pnl"]}
 

@@ -168,7 +168,7 @@ async def get_strategies():
 
 @app.post("/api/strategies")
 async def create_strategy(strategy: StrategyConfig):
-    result = nautilus_manager.add_strategy(strategy.dict())
+    result = nautilus_manager.add_strategy(strategy.model_dump())
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result
@@ -217,7 +217,7 @@ async def get_order(order_id: str):
 
 @app.post("/api/orders")
 async def create_order(order_data: OrderRequest):
-    result = nautilus_manager.create_order(order_data.dict())
+    result = nautilus_manager.create_order(order_data.model_dump())
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result
@@ -273,7 +273,7 @@ async def get_risk_limits():
 
 @app.post("/api/risk/limits")
 async def update_risk_limits(limits: RiskLimitsRequest):
-    data = {k: v for k, v in limits.dict().items() if v is not None}
+    data = {k: v for k, v in limits.model_dump().items() if v is not None}
     return nautilus_manager.update_risk_limits(data)
 
 # ---------- Market Data (simulated) ----------

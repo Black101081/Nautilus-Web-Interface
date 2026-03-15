@@ -11,7 +11,7 @@ import sys
 import asyncio
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add backend directory to path
@@ -139,7 +139,7 @@ async def get_system_info():
 @app.post("/api/nautilus/strategies")
 async def create_strategy(request: StrategyCreateRequest):
     """Create a new trading strategy"""
-    config = request.dict()
+    config = request.model_dump()
     result = nautilus_system.create_strategy(config)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
@@ -225,7 +225,7 @@ async def legacy_list_strategies():
             "type": strategy["type"],
             "status": strategy["status"],
             "description": strategy.get("description", "SMA Crossover strategy"),
-            "instrument": getattr(cfg, "instrument_id", "EUR/USD.SIM") if cfg else "EUR/USD.SIM",
+            "instrument": cfg.get("instrument_id", "EUR/USD.SIM") if cfg else "EUR/USD.SIM",
             "performance": {
                 "total_pnl": br.get("total_pnl", 0.0) if br else 0.0,
                 "total_trades": br.get("total_trades", 0) if br else 0,
@@ -302,7 +302,7 @@ async def legacy_list_orders():
                 "price": o.get("avg_px"),
                 "status": status,
                 "filled_qty": o.get("filled_qty", 0),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
     # Append manually created orders
     all_orders.extend(_pending_orders)
@@ -322,7 +322,7 @@ async def create_order_ui(order_body: Dict[str, Any] = Body(...)):
         "price": order_body.get("price"),
         "status": "PENDING",
         "filled_qty": 0,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     _pending_orders.append(order)
     return {"success": True, "order": order}
@@ -396,7 +396,7 @@ async def create_alert(body: Dict[str, Any] = Body(...)):
         "price": body.get("price", 0),
         "message": body.get("message", ""),
         "status": "active",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "triggered_at": None,
     }
     _alerts.append(alert)
@@ -429,7 +429,7 @@ _DEMO_PRICES = {
 def _simulated_price(base: float) -> float:
     """Return a price slightly varied around the base using current time."""
     import math
-    t = datetime.utcnow().timestamp()
+    t = datetime.now(timezone.utc).timestamp()
     noise = math.sin(t * 0.3) * 0.0002 + math.cos(t * 0.7) * 0.0001
     return round(base * (1 + noise), 5)
 
@@ -469,7 +469,7 @@ async def market_data_quote(symbol: str):
         "ask": round(price + spread, 5),
         "volume_24h": round(base_price * 1_200_000 + _simulated_price(1_200_000), 2),
         "change_24h": round((price - base_price) / base_price * 100, 3),
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -735,7 +735,7 @@ async def list_trades(limit: int = 20):
                 "price": order.get("avg_px"),
                 "status": status,
                 "filled_qty": order.get("filled_qty", 0),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
     return {"trades": all_trades[:limit], "count": len(all_trades)}
 
@@ -782,7 +782,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json({"type": "pong"})
             except asyncio.TimeoutError:
                 # Send heartbeat
-                await websocket.send_json({"type": "heartbeat", "ts": datetime.utcnow().isoformat()})
+                await websocket.send_json({"type": "heartbeat", "ts": datetime.now(timezone.utc).isoformat()})
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
@@ -848,7 +848,7 @@ async def backup_database(body: Dict[str, Any] = Body(...)):
     return {
         "success": True,
         "message": f"Backup of '{db_type}' completed successfully",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "size_mb": round(42.5 + len(db_type) * 0.1, 1),
     }
 

@@ -158,7 +158,7 @@ export const nautilusService = {
   async getRiskMetrics() {
     return api.get<{
       total_exposure: number;
-      var_95: number;
+      var_1d: number;
       max_drawdown: number;
       sharpe_ratio: number;
       total_pnl: number;

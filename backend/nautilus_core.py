@@ -7,7 +7,7 @@ Uses low-level BacktestEngine API for direct control
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
@@ -129,7 +129,7 @@ class NautilusTradingSystem:
                     "type": strategy_type,
                     "config": strategy_config,
                     "status": "created",
-                    "created_at": datetime.utcnow().isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat()
                 }
                 
                 return {
@@ -301,7 +301,7 @@ class NautilusTradingSystem:
                 "max_drawdown": max_drawdown,
                 "sharpe_ratio": sharpe_ratio,
                 "total_orders": len(orders),
-                "completed_at": datetime.utcnow().isoformat(),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
                 "equity_curve": equity_curve,
                 "orders": [self._order_to_dict(o) for o in orders[:200]],
                 "positions": [self._position_to_dict(p) for p in positions[:200]],
@@ -309,7 +309,7 @@ class NautilusTradingSystem:
             
             self.backtest_results[strategy_id] = backtest_result
             self.strategies[strategy_id]["status"] = "backtested"
-            self.strategies[strategy_id]["last_backtest"] = datetime.utcnow().isoformat()
+            self.strategies[strategy_id]["last_backtest"] = datetime.now(timezone.utc).isoformat()
             
             print(f"📈 Total P&L: ${total_pnl:,.2f}")
             print(f"📊 Total Trades: {total_trades}")
@@ -361,7 +361,7 @@ class NautilusTradingSystem:
             try:
                 time_str = datetime.utcfromtimestamp(ts_secs).isoformat()
             except Exception:
-                time_str = datetime.utcnow().isoformat()
+                time_str = datetime.now(timezone.utc).isoformat()
             equity_curve.append({"time": time_str, "equity": round(running, 2)})
         return equity_curve
 
@@ -518,7 +518,7 @@ class NautilusTradingSystem:
                 "max_drawdown": max_drawdown,
                 "sharpe_ratio": sharpe_ratio,
                 "total_orders": len(orders),
-                "completed_at": datetime.utcnow().isoformat(),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
                 "equity_curve": equity_curve,
                 "orders": [self._order_to_dict(o) for o in orders[:200]],
                 "positions": [self._position_to_dict(p) for p in positions[:200]],

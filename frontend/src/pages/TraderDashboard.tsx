@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useNotification } from "@/contexts/NotificationContext";
-import { nautilusService } from '@/services/nautilusService';
+import nautilusService from '@/services/nautilusService';
 import { useWebSocket } from '@/hooks/useWebSocket';
 
 export default function TraderDashboard() {

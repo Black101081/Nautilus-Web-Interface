@@ -41,7 +41,7 @@ interface RiskMetrics {
   total_trades: number;
   max_drawdown: number;
   sharpe_ratio: number;
-  var_95: number;
+  var_1d: number;
   total_exposure: number;
 }
 
@@ -187,7 +187,7 @@ export default function PerformancePage() {
                     {[
                       { label: 'Max Drawdown', value: `${risk.max_drawdown.toFixed(2)}%`, color: 'text-orange-600' },
                       { label: 'Sharpe Ratio', value: risk.sharpe_ratio.toFixed(2), color: risk.sharpe_ratio >= 1 ? 'text-green-600' : 'text-gray-700' },
-                      { label: 'VaR (95%)', value: formatCurrency(risk.var_95), color: 'text-red-600' },
+                      { label: 'VaR (95%)', value: formatCurrency(risk.var_1d), color: 'text-red-600' },
                       { label: 'Open Positions', value: String(summary!.open_positions), color: 'text-blue-600' },
                     ].map(m => (
                       <div key={m.label} className="bg-gray-50 rounded-lg p-3">
