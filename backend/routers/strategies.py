@@ -1,26 +1,118 @@
+"""
+Strategies router — full CRUD with SQLite persistence.
+Supports: sma_crossover, rsi
+"""
+
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field
 
+import database
 from state import nautilus_system
 
 router = APIRouter(prefix="/api", tags=["strategies"])
+
+# ── Supported strategy types ──────────────────────────────────────────────────
+
+_STRATEGY_TYPES = {
+    "sma_crossover": {
+        "label": "SMA Crossover",
+        "description": "Buy when fast SMA crosses above slow SMA, sell on cross-down.",
+        "default_config": {
+            "instrument_id": "EUR/USD.SIM",
+            "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+            "fast_period": 10,
+            "slow_period": 20,
+            "trade_size": "100000",
+        },
+    },
+    "rsi": {
+        "label": "RSI Mean-Reversion",
+        "description": "Enter long on RSI oversold cross-up, short on overbought cross-down.",
+        "default_config": {
+            "instrument_id": "EUR/USD.SIM",
+            "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+            "rsi_period": 14,
+            "oversold_level": 30.0,
+            "overbought_level": 70.0,
+            "trade_size": "100000",
+        },
+    },
+}
 
 
 class StrategyCreateRequest(BaseModel):
     id: Optional[str] = None
     name: str = Field(..., min_length=1, max_length=100)
     type: str = "sma_crossover"
+    description: str = ""
     instrument_id: str = "EUR/USD.SIM"
     bar_type: str = "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"
+    # SMA params
     fast_period: int = Field(10, ge=1, le=500)
     slow_period: int = Field(20, ge=1, le=500)
+    # RSI params
+    rsi_period: int = Field(14, ge=2, le=200)
+    oversold_level: float = Field(30.0, ge=1, le=49)
+    overbought_level: float = Field(70.0, ge=51, le=99)
     trade_size: str = "100000"
 
 
-# ── Nautilus native endpoints ────────────────────────────────────────────────
+def _db_row_to_strategy(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a DB row into the dict shape used by nautilus_system.strategies."""
+    import json
+    cfg = {}
+    try:
+        cfg = json.loads(row.get("config", "{}"))
+    except Exception:
+        pass
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "type": row["type"],
+        "status": row.get("status", "stopped"),
+        "description": row.get("description", ""),
+        "config": cfg,
+    }
 
+
+async def load_strategies_from_db() -> None:
+    """Called at startup to restore persisted strategies into nautilus_system."""
+    rows = await database.list_strategies()
+    for row in rows:
+        sid = row["id"]
+        if sid not in nautilus_system.strategies:
+            s = _db_row_to_strategy(row)
+            nautilus_system.strategies[sid] = s
+            # Register with NautilusTrader engine if SMA type
+            if s["type"] == "sma_crossover":
+                cfg = s["config"]
+                nautilus_system.create_strategy({
+                    "id": sid,
+                    "name": s["name"],
+                    "type": "sma_crossover",
+                    "instrument_id": cfg.get("instrument_id", "EUR/USD.SIM"),
+                    "bar_type": cfg.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
+                    "fast_period": cfg.get("fast_period", 10),
+                    "slow_period": cfg.get("slow_period", 20),
+                    "trade_size": cfg.get("trade_size", "100000"),
+                })
+                # Restore the persisted status after create (create sets to 'active')
+                if sid in nautilus_system.strategies:
+                    nautilus_system.strategies[sid]["status"] = s["status"]
+
+
+# ── Strategy types metadata endpoint ─────────────────────────────────────────
+
+@router.get("/strategy-types")
+async def list_strategy_types():
+    return {"types": [{"id": k, **v} for k, v in _STRATEGY_TYPES.items()]}
+
+
+# ── Nautilus native endpoints ─────────────────────────────────────────────────
 
 @router.get("/nautilus/strategies")
 async def nautilus_list_strategies():
@@ -44,8 +136,7 @@ async def nautilus_create_strategy(request: StrategyCreateRequest):
     return result
 
 
-# ── UI-facing endpoints (used by StrategiesPage) ─────────────────────────────
-
+# ── UI-facing endpoints ───────────────────────────────────────────────────────
 
 @router.get("/strategies")
 async def list_strategies():
@@ -54,7 +145,6 @@ async def list_strategies():
     for strategy in strategies:
         br = nautilus_system.get_backtest_results(strategy["id"])
         cfg = strategy.get("config") or {}
-        # cfg may be a Pydantic/dataclass object instead of a plain dict
         if hasattr(cfg, "instrument_id"):
             instrument = str(cfg.instrument_id)
         elif isinstance(cfg, dict):
@@ -67,12 +157,11 @@ async def list_strategies():
                 "name": strategy["name"],
                 "type": strategy["type"],
                 "status": strategy["status"],
-                "description": strategy.get("description", "SMA Crossover strategy"),
+                "description": strategy.get("description", ""),
                 "instrument": instrument,
                 "performance": {
                     "total_pnl": br.get("total_pnl", 0.0) if br else 0.0,
                     "total_trades": br.get("total_trades", 0) if br else 0,
-                    # Normalise to 0-1 decimal (StrategiesPage expects this)
                     "win_rate": (br.get("win_rate", 0.0) / 100.0) if br else 0.0,
                 },
             }
@@ -82,21 +171,59 @@ async def list_strategies():
 
 @router.post("/strategies")
 async def create_strategy(body: Dict[str, Any] = Body(...)):
-    config = {
-        "name": body.get("name", "New Strategy"),
-        "type": "sma_crossover",
-        "instrument_id": "EUR/USD.SIM",
-        "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
-        "fast_period": 10,
-        "slow_period": 20,
-        "trade_size": "100000",
+    strategy_type = body.get("type", "sma_crossover")
+    if strategy_type not in _STRATEGY_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown strategy type: {strategy_type}")
+
+    defaults = _STRATEGY_TYPES[strategy_type]["default_config"].copy()
+    sid = body.get("id") or f"STR-{uuid.uuid4().hex[:8].upper()}"
+    name = body.get("name", "New Strategy")
+    description = body.get("description", _STRATEGY_TYPES[strategy_type]["description"])
+
+    # Build config from request body, falling back to defaults
+    config = {k: body.get(k, defaults[k]) for k in defaults}
+
+    now = datetime.now(timezone.utc).isoformat()
+    strategy_row = {
+        "id": sid,
+        "name": name,
+        "type": strategy_type,
+        "status": "stopped",
+        "description": description,
+        "config": config,
+        "created_at": now,
+        "updated_at": now,
     }
-    result = nautilus_system.create_strategy(config)
-    if result.get("success") and result.get("strategy_id"):
-        sid = result["strategy_id"]
-        if sid in nautilus_system.strategies:
-            nautilus_system.strategies[sid]["description"] = body.get("description", "")
-    return result
+
+    # Persist to DB
+    await database.save_strategy(strategy_row)
+
+    # Register in memory for SMA type (nautilus_core only supports SMA today)
+    if strategy_type == "sma_crossover":
+        result = nautilus_system.create_strategy({**config, "name": name, "type": strategy_type})
+        if result.get("success") and result.get("strategy_id"):
+            actual_sid = result["strategy_id"]
+            # If nautilus assigned a different ID, update DB
+            if actual_sid != sid:
+                strategy_row["id"] = actual_sid
+                await database.delete_strategy(sid)
+                await database.save_strategy(strategy_row)
+            if actual_sid in nautilus_system.strategies:
+                nautilus_system.strategies[actual_sid]["description"] = description
+                nautilus_system.strategies[actual_sid]["status"] = "stopped"
+            return {"success": True, "strategy_id": actual_sid, "strategy": strategy_row}
+    else:
+        # For non-SMA types store in memory directly
+        nautilus_system.strategies[sid] = {
+            "id": sid,
+            "name": name,
+            "type": strategy_type,
+            "status": "stopped",
+            "description": description,
+            "config": config,
+        }
+
+    return {"success": True, "strategy_id": sid, "strategy": strategy_row}
 
 
 @router.delete("/strategies/{strategy_id}")
@@ -104,6 +231,7 @@ async def delete_strategy(strategy_id: str):
     if strategy_id not in nautilus_system.strategies:
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
     del nautilus_system.strategies[strategy_id]
+    await database.delete_strategy(strategy_id)
     return {"success": True, "message": f"Strategy {strategy_id} deleted"}
 
 
@@ -112,6 +240,7 @@ async def start_strategy(strategy_id: str):
     if strategy_id not in nautilus_system.strategies:
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
     nautilus_system.strategies[strategy_id]["status"] = "running"
+    await database.update_strategy_status(strategy_id, "running")
     return {"success": True, "message": f"Strategy {strategy_id} started"}
 
 
@@ -120,4 +249,5 @@ async def stop_strategy(strategy_id: str):
     if strategy_id not in nautilus_system.strategies:
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
     nautilus_system.strategies[strategy_id]["status"] = "stopped"
+    await database.update_strategy_status(strategy_id, "stopped")
     return {"success": True, "message": f"Strategy {strategy_id} stopped"}

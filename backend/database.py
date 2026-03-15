@@ -81,6 +81,47 @@ async def init_db() -> None:
                 value       TEXT NOT NULL,
                 PRIMARY KEY (namespace, key)
             );
+
+            CREATE TABLE IF NOT EXISTS strategies (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                type        TEXT NOT NULL DEFAULT 'sma_crossover',
+                status      TEXT NOT NULL DEFAULT 'stopped',
+                description TEXT NOT NULL DEFAULT '',
+                config      TEXT NOT NULL DEFAULT '{}',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS positions (
+                id          TEXT PRIMARY KEY,
+                instrument  TEXT NOT NULL,
+                side        TEXT NOT NULL,
+                quantity    REAL NOT NULL DEFAULT 0,
+                entry_price REAL,
+                exit_price  REAL,
+                pnl         REAL DEFAULT 0,
+                is_open     INTEGER NOT NULL DEFAULT 1,
+                strategy_id TEXT,
+                opened_at   TEXT NOT NULL,
+                closed_at   TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS adapter_configs (
+                adapter_id      TEXT PRIMARY KEY,
+                api_key         TEXT,
+                api_secret      TEXT,
+                status          TEXT NOT NULL DEFAULT 'disconnected',
+                last_connected  TEXT,
+                extra_config    TEXT DEFAULT '{}',
+                updated_at      TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS component_states (
+                component_id    TEXT PRIMARY KEY,
+                status          TEXT NOT NULL DEFAULT 'stopped',
+                updated_at      TEXT NOT NULL
+            );
             """
         )
         await db.commit()
@@ -258,3 +299,180 @@ async def update_settings(body: Dict[str, Any]) -> Dict[str, Any]:
             )
         await db.commit()
     return settings
+
+
+# ── Strategies ────────────────────────────────────────────────────────────────
+
+async def list_strategies() -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM strategies ORDER BY created_at DESC") as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def save_strategy(strategy: Dict[str, Any]) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT OR REPLACE INTO strategies
+                (id, name, type, status, description, config, created_at, updated_at)
+            VALUES (:id, :name, :type, :status, :description, :config, :created_at, :updated_at)
+            """,
+            {
+                "id": strategy["id"],
+                "name": strategy["name"],
+                "type": strategy.get("type", "sma_crossover"),
+                "status": strategy.get("status", "stopped"),
+                "description": strategy.get("description", ""),
+                "config": json.dumps(strategy.get("config", {})),
+                "created_at": strategy.get("created_at", now),
+                "updated_at": now,
+            },
+        )
+        await db.commit()
+
+
+async def update_strategy_status(strategy_id: str, status: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE strategies SET status = ?, updated_at = ? WHERE id = ?",
+            (status, datetime.now(timezone.utc).isoformat(), strategy_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_strategy(strategy_id: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("DELETE FROM strategies WHERE id = ?", (strategy_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+# ── Positions ─────────────────────────────────────────────────────────────────
+
+async def list_db_positions(open_only: bool = True) -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        query = "SELECT * FROM positions"
+        if open_only:
+            query += " WHERE is_open = 1"
+        query += " ORDER BY opened_at DESC LIMIT 200"
+        async with db.execute(query) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def save_positions(positions: List[Dict[str, Any]], strategy_id: str = "") -> None:
+    """Upsert a list of position dicts (from backtest results) into DB."""
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        for p in positions:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO positions
+                    (id, instrument, side, quantity, entry_price, exit_price,
+                     pnl, is_open, strategy_id, opened_at, closed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    p.get("id", f"POS-{uuid.uuid4().hex[:8].upper()}"),
+                    p.get("instrument", "UNKNOWN"),
+                    p.get("side", "LONG"),
+                    float(p.get("quantity", 0)),
+                    p.get("entry_price"),
+                    p.get("exit_price"),
+                    float(p.get("pnl", 0)),
+                    1 if p.get("is_open", False) else 0,
+                    strategy_id,
+                    p.get("opened_at", now),
+                    p.get("closed_at"),
+                ),
+            )
+        await db.commit()
+
+
+async def close_db_position(position_id: str) -> bool:
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE positions SET is_open = 0, closed_at = ? WHERE id = ?",
+            (now, position_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+# ── Adapter configs ───────────────────────────────────────────────────────────
+
+async def get_adapter_config(adapter_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM adapter_configs WHERE adapter_id = ?", (adapter_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def upsert_adapter_config(
+    adapter_id: str,
+    status: str,
+    api_key: Optional[str] = None,
+    api_secret: Optional[str] = None,
+    extra_config: Optional[Dict] = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    last_connected = now if status == "connected" else None
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO adapter_configs
+                (adapter_id, api_key, api_secret, status, last_connected, extra_config, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(adapter_id) DO UPDATE SET
+                api_key        = excluded.api_key,
+                api_secret     = excluded.api_secret,
+                status         = excluded.status,
+                last_connected = COALESCE(excluded.last_connected, last_connected),
+                extra_config   = excluded.extra_config,
+                updated_at     = excluded.updated_at
+            """,
+            (
+                adapter_id,
+                api_key,
+                api_secret,
+                status,
+                last_connected,
+                json.dumps(extra_config or {}),
+                now,
+            ),
+        )
+        await db.commit()
+
+
+# ── Component states ──────────────────────────────────────────────────────────
+
+async def get_component_states() -> Dict[str, str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT component_id, status FROM component_states") as cur:
+            rows = await cur.fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+async def set_component_state(component_id: str, status: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO component_states (component_id, status, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(component_id) DO UPDATE SET
+                status     = excluded.status,
+                updated_at = excluded.updated_at
+            """,
+            (component_id, status, now),
+        )
+        await db.commit()

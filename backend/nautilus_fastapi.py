@@ -33,6 +33,8 @@ from routers import (
     strategies,
     system,
 )
+from routers.strategies import load_strategies_from_db
+from routers.components import load_component_states
 from state import manager, nautilus_system
 
 
@@ -42,6 +44,9 @@ from state import manager, nautilus_system
 async def lifespan(app: FastAPI):
     # Startup: initialise the SQLite schema + seed defaults
     await database.init_db()
+    # Restore persisted strategies and component states
+    await load_strategies_from_db()
+    await load_component_states()
     yield
     # Shutdown: nothing to clean up
 

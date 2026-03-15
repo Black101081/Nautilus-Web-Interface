@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+import database
 from state import nautilus_system, manager
 
 router = APIRouter(prefix="/api/nautilus", tags=["backtest"])
@@ -30,6 +31,10 @@ async def run_backtest(request: BacktestRequest):
     )
     if not result["success"]:
         raise HTTPException(status_code=500, detail=result["message"])
+    # Persist positions to DB
+    positions = result.get("result", {}).get("positions", [])
+    if positions:
+        await database.save_positions(positions, strategy_id=request.strategy_id)
     return result
 
 
@@ -56,6 +61,10 @@ async def run_demo_backtest(request: DemoBacktestRequest):
         raise HTTPException(
             status_code=500, detail=result.get("message", "Demo backtest failed")
         )
+    # Persist demo positions
+    demo_positions = result.get("result", {}).get("positions", [])
+    if demo_positions:
+        await database.save_positions(demo_positions, strategy_id="demo")
     await manager.broadcast(
         {
             "type": "backtest_complete",

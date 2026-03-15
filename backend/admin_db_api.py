@@ -1,14 +1,16 @@
 """
 Admin Panel Database API
-SQLite database management endpoints
+SQLite database management endpoints with auto audit logging.
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+import hashlib
 import sqlite3
 import json
 import os
+import urllib.request
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -36,11 +38,12 @@ def _init_db() -> None:
         );
 
         CREATE TABLE IF NOT EXISTS users (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            username   TEXT UNIQUE NOT NULL,
-            email      TEXT UNIQUE NOT NULL,
-            role       TEXT NOT NULL DEFAULT 'viewer',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            username      TEXT UNIQUE NOT NULL,
+            email         TEXT UNIQUE NOT NULL,
+            role          TEXT NOT NULL DEFAULT 'viewer',
+            password_hash TEXT,
+            created_at    TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS api_configs (
@@ -247,6 +250,18 @@ def get_db():
     return conn
 
 
+def _log_action(conn: sqlite3.Connection, action: str, user: str = "system", details: str = "") -> None:
+    """Insert an audit log entry within an existing connection."""
+    conn.execute(
+        "INSERT INTO audit_logs (action, user, details) VALUES (?, ?, ?)",
+        (action, user, details),
+    )
+
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class Setting(BaseModel):
@@ -259,6 +274,7 @@ class User(BaseModel):
     username: str
     email: str
     role: str = "viewer"
+    password: Optional[str] = None
 
 class APIConfig(BaseModel):
     name: str
@@ -320,6 +336,7 @@ def create_setting(setting: Setting):
             "INSERT INTO settings (key, value, category, description) VALUES (?, ?, ?, ?)",
             (setting.key, setting.value, setting.category, setting.description)
         )
+        _log_action(conn, "setting.create", details=f"key={setting.key} category={setting.category}")
         conn.commit()
         conn.close()
         return {"message": f"Setting '{setting.key}' created successfully"}
@@ -328,7 +345,7 @@ def create_setting(setting: Setting):
         raise HTTPException(status_code=400, detail="Setting already exists")
 
 @app.put("/api/admin/settings/{key}")
-def update_setting(key: str, value: str):
+def update_setting(key: str, value: str = Query(...)):
     conn = get_db()
     conn.execute(
         "UPDATE settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?",
@@ -337,6 +354,7 @@ def update_setting(key: str, value: str):
     if conn.total_changes == 0:
         conn.close()
         raise HTTPException(status_code=404, detail="Setting not found")
+    _log_action(conn, "setting.update", details=f"key={key} value={value}")
     conn.commit()
     conn.close()
     return {"message": f"Setting '{key}' updated successfully"}
@@ -348,6 +366,7 @@ def delete_setting(key: str):
     if conn.total_changes == 0:
         conn.close()
         raise HTTPException(status_code=404, detail="Setting not found")
+    _log_action(conn, "setting.delete", details=f"key={key}")
     conn.commit()
     conn.close()
     return {"message": f"Setting '{key}' deleted successfully"}
@@ -367,10 +386,12 @@ def get_users():
 def create_user(user: User):
     conn = get_db()
     try:
+        pw_hash = _hash_password(user.password) if user.password else None
         conn.execute(
-            "INSERT INTO users (username, email, role) VALUES (?, ?, ?)",
-            (user.username, user.email, user.role)
+            "INSERT INTO users (username, email, role, password_hash) VALUES (?, ?, ?, ?)",
+            (user.username, user.email, user.role, pw_hash)
         )
+        _log_action(conn, "user.create", details=f"username={user.username} role={user.role}")
         conn.commit()
         conn.close()
         return {"message": f"User '{user.username}' created successfully"}
@@ -397,6 +418,7 @@ def create_api_config(config: APIConfig):
             "INSERT INTO api_configs (name, endpoint, api_key, is_enabled) VALUES (?, ?, ?, ?)",
             (config.name, config.endpoint, config.api_key, config.is_enabled)
         )
+        _log_action(conn, "api_config.create", details=f"name={config.name} endpoint={config.endpoint}")
         conn.commit()
         conn.close()
         return {"message": f"API config '{config.name}' created successfully"}
@@ -422,6 +444,7 @@ def create_scheduled_task(task: ScheduledTask):
         "INSERT INTO scheduled_tasks (name, task_type, schedule, parameters, is_active) VALUES (?, ?, ?, ?, ?)",
         (task.name, task.task_type, task.schedule, task.parameters, task.is_active)
     )
+    _log_action(conn, "task.create", details=f"name={task.name} type={task.task_type} schedule={task.schedule}")
     conn.commit()
     conn.close()
     return {"message": f"Task '{task.name}' created successfully"}
@@ -459,18 +482,55 @@ def get_component(component_id: int):
     return dict(component)
 
 @app.put("/api/admin/components/{component_id}/status")
-def update_component_status(component_id: int, status: str):
+def update_component_status(component_id: int, status: str = Query(...)):
     conn = get_db()
+    row = conn.execute("SELECT name FROM components WHERE id = ?", (component_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Component not found")
     conn.execute(
         "UPDATE components SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (status, component_id)
     )
-    if conn.total_changes == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Component not found")
+    _log_action(conn, "component.status_change", details=f"component={row['name']} status={status}")
     conn.commit()
     conn.close()
     return {"message": f"Component status updated to '{status}'"}
+
+
+@app.post("/api/admin/components/sync")
+def sync_components_from_main_api():
+    """
+    Pull live component statuses from the main NautilusTrader backend
+    and update the admin DB to reflect current engine state.
+    """
+    main_api_url = os.getenv("MAIN_API_URL", "http://backend:8000")
+    try:
+        with urllib.request.urlopen(
+            f"{main_api_url}/api/components", timeout=5
+        ) as resp:
+            data = json.loads(resp.read())
+        components_live = data.get("components", [])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not reach main backend: {exc}"
+        )
+
+    conn = get_db()
+    updated = 0
+    for comp in components_live:
+        name = comp.get("name", "")
+        status = comp.get("status", "stopped")
+        cur = conn.execute(
+            "UPDATE components SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+            (status, name)
+        )
+        updated += cur.rowcount
+    _log_action(conn, "components.sync", details=f"synced {updated} components from main API")
+    conn.commit()
+    conn.close()
+    return {"success": True, "synced": updated, "message": f"Synced {updated} component statuses"}
 
 
 # ── Features ──────────────────────────────────────────────────────────────────
@@ -496,7 +556,7 @@ def get_feature(feature_id: int):
 @app.put("/api/admin/features/{feature_id}/toggle")
 def toggle_feature(feature_id: int):
     conn = get_db()
-    cursor = conn.execute("SELECT enabled FROM features WHERE id = ?", (feature_id,))
+    cursor = conn.execute("SELECT name, enabled FROM features WHERE id = ?", (feature_id,))
     feature = cursor.fetchone()
     if not feature:
         conn.close()
@@ -505,6 +565,10 @@ def toggle_feature(feature_id: int):
     conn.execute(
         "UPDATE features SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (new_status, feature_id)
+    )
+    _log_action(
+        conn, "feature.toggle",
+        details=f"feature={feature['name']} enabled={'true' if new_status else 'false'}"
     )
     conn.commit()
     conn.close()
@@ -532,16 +596,18 @@ def get_adapter(adapter_id: int):
     return dict(adapter)
 
 @app.put("/api/admin/adapters/{adapter_id}/status")
-def update_adapter_status(adapter_id: int, status: str):
+def update_adapter_status(adapter_id: int, status: str = Query(...)):
     conn = get_db()
+    row = conn.execute("SELECT name FROM adapters WHERE id = ?", (adapter_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Adapter not found")
     last_connected = datetime.now().isoformat() if status == 'connected' else None
     conn.execute(
         "UPDATE adapters SET status = ?, last_connected = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (status, last_connected, adapter_id)
     )
-    if conn.total_changes == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Adapter not found")
+    _log_action(conn, "adapter.status_change", details=f"adapter={row['name']} status={status}")
     conn.commit()
     conn.close()
     return {"message": f"Adapter status updated to '{status}'"}

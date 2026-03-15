@@ -45,7 +45,21 @@ async def health_check():
     except Exception:
         checks["psutil"] = "unavailable"
 
-    all_ok = all(v in ("ok", "initialized", "not_initialized") for v in checks.values())
+    # 4. Market data service reachable?
+    try:
+        import urllib.request
+        with urllib.request.urlopen(
+            "https://api.binance.com/api/v3/ping", timeout=3
+        ) as resp:
+            checks["market_data"] = "ok" if resp.status == 200 else f"http_{resp.status}"
+    except Exception:
+        # Binance unreachable — degraded but not critical in backtest mode
+        checks["market_data"] = "unreachable"
+
+    all_ok = all(
+        v in ("ok", "initialized", "not_initialized")
+        for v in checks.values()
+    )
     return {
         "status": "healthy" if all_ok else "degraded",
         "timestamp": datetime.now(timezone.utc).isoformat(),

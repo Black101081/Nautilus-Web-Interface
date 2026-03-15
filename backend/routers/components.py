@@ -3,19 +3,18 @@ Component lifecycle management router.
 
 NautilusTrader internal components (DataEngine, RiskEngine, etc.) cannot be
 individually started/stopped from outside the engine while it is running.
-This router tracks *user-requested* states in memory and reflects the real
-engine state for read operations.
+This router tracks user-requested states in SQLite (persistent across
+restarts) and reflects the real engine state for read operations.
 """
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+import database
 from state import nautilus_system
 
 router = APIRouter(prefix="/api/component", tags=["components"])
 
-# ── In-memory component state store ──────────────────────────────────────────
-# Keys match the component IDs returned by GET /api/components (system.py).
 _COMPONENT_DEFS = {
     "data_engine": {
         "name": "Data Engine",
@@ -49,12 +48,11 @@ _COMPONENT_DEFS = {
     },
 }
 
-# Stores overrides: component_id -> "running" | "stopped" | "restarting"
-_state_overrides: dict[str, str] = {}
+# In-process cache of DB state to avoid a DB round-trip on every read
+_state_cache: dict[str, str] = {}
 
 
 def _default_status(component_id: str) -> str:
-    """Return live status based on whether the engine is initialised."""
     always_active = {"cache", "message_bus"}
     if component_id in always_active:
         return "active"
@@ -62,7 +60,18 @@ def _default_status(component_id: str) -> str:
 
 
 def _current_status(component_id: str) -> str:
-    return _state_overrides.get(component_id, _default_status(component_id))
+    return _state_cache.get(component_id, _default_status(component_id))
+
+
+async def _set_status(component_id: str, status: str) -> None:
+    _state_cache[component_id] = status
+    await database.set_component_state(component_id, status)
+
+
+async def load_component_states() -> None:
+    """Called at startup to restore persisted states into the in-process cache."""
+    db_states = await database.get_component_states()
+    _state_cache.update(db_states)
 
 
 class ComponentActionRequest(BaseModel):
@@ -74,7 +83,7 @@ async def stop_component(req: ComponentActionRequest):
     cid = req.component
     if cid not in _COMPONENT_DEFS:
         return {"success": False, "message": f"Unknown component '{cid}'"}
-    _state_overrides[cid] = "stopped"
+    await _set_status(cid, "stopped")
     return {
         "success": True,
         "message": f"Component '{_COMPONENT_DEFS[cid]['name']}' stopped",
@@ -88,7 +97,7 @@ async def start_component(req: ComponentActionRequest):
     cid = req.component
     if cid not in _COMPONENT_DEFS:
         return {"success": False, "message": f"Unknown component '{cid}'"}
-    _state_overrides[cid] = "running"
+    await _set_status(cid, "running")
     return {
         "success": True,
         "message": f"Component '{_COMPONENT_DEFS[cid]['name']}' started",
@@ -102,7 +111,7 @@ async def restart_component(req: ComponentActionRequest):
     cid = req.component
     if cid not in _COMPONENT_DEFS:
         return {"success": False, "message": f"Unknown component '{cid}'"}
-    _state_overrides[cid] = "running"
+    await _set_status(cid, "running")
     return {
         "success": True,
         "message": f"Component '{_COMPONENT_DEFS[cid]['name']}' restarted",
@@ -127,7 +136,6 @@ async def configure_component(req: ComponentActionRequest):
 
 @router.get("/status")
 async def list_component_statuses():
-    """Return real-time status of all components."""
     return {
         "components": [
             {
