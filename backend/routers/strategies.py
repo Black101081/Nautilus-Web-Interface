@@ -1,6 +1,6 @@
 """
 Strategies router — full CRUD with SQLite persistence.
-Supports: sma_crossover, rsi
+Supports: sma_crossover, rsi, macd
 """
 
 import json
@@ -39,6 +39,18 @@ _STRATEGY_TYPES = {
             "rsi_period": 14,
             "oversold_level": 30.0,
             "overbought_level": 70.0,
+            "trade_size": "100000",
+        },
+    },
+    "macd": {
+        "label": "MACD Crossover",
+        "description": "Buy when MACD line crosses above signal line, sell on cross-down.",
+        "default_config": {
+            "instrument_id": "EUR/USD.SIM",
+            "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9,
             "trade_size": "100000",
         },
     },
@@ -88,7 +100,7 @@ async def load_strategies_from_db() -> None:
             s = _db_row_to_strategy(row)
             nautilus_system.strategies[sid] = s
             # Register with NautilusTrader engine (SMA and RSI supported)
-            if s["type"] in ("sma_crossover", "rsi"):
+            if s["type"] in ("sma_crossover", "rsi", "macd"):
                 cfg = s["config"]
                 nautilus_system.create_strategy({
                     "id": sid,
@@ -195,6 +207,29 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
                 detail=f"fast_period ({fast}) must be less than slow_period ({slow})",
             )
 
+    # RSI validation
+    if strategy_type == "rsi":
+        rsi_period = int(body.get("rsi_period", 14))
+        oversold = float(body.get("oversold_level", 30.0))
+        overbought = float(body.get("overbought_level", 70.0))
+        if rsi_period < 2:
+            raise HTTPException(status_code=422, detail="rsi_period must be >= 2")
+        if oversold >= overbought:
+            raise HTTPException(
+                status_code=422,
+                detail=f"oversold_level ({oversold}) must be less than overbought_level ({overbought})",
+            )
+
+    # MACD validation
+    if strategy_type == "macd":
+        fast = int(body.get("fast_period", 12))
+        slow = int(body.get("slow_period", 26))
+        if fast >= slow:
+            raise HTTPException(
+                status_code=422,
+                detail=f"MACD fast_period ({fast}) must be less than slow_period ({slow})",
+            )
+
     defaults = _STRATEGY_TYPES[strategy_type]["default_config"].copy()
     sid = body.get("id") or f"STR-{uuid.uuid4().hex[:8].upper()}"
     description = body.get("description", _STRATEGY_TYPES[strategy_type]["description"])
@@ -247,7 +282,7 @@ async def delete_strategy(strategy_id: str):
 async def start_strategy(strategy_id: str):
     if strategy_id not in nautilus_system.strategies:
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
-    nautilus_system.strategies[strategy_id]["status"] = "running"
+    nautilus_system.start_strategy(strategy_id)
     await database.update_strategy_status(strategy_id, "running")
     return {"success": True, "message": f"Strategy {strategy_id} started"}
 
@@ -256,6 +291,6 @@ async def start_strategy(strategy_id: str):
 async def stop_strategy(strategy_id: str):
     if strategy_id not in nautilus_system.strategies:
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
-    nautilus_system.strategies[strategy_id]["status"] = "stopped"
+    nautilus_system.stop_strategy(strategy_id)
     await database.update_strategy_status(strategy_id, "stopped")
     return {"success": True, "message": f"Strategy {strategy_id} stopped"}

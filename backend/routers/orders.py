@@ -5,7 +5,8 @@ from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field
 
 import database
-from state import nautilus_system
+from risk_engine import risk_engine, RiskCheckError
+from state import live_manager, nautilus_system
 from utils import normalize_order
 
 router = APIRouter(prefix="/api", tags=["orders"])
@@ -17,6 +18,7 @@ class OrderCreateRequest(BaseModel):
     type: str = Field("MARKET", pattern="^(MARKET|LIMIT|STOP)$")
     quantity: float = Field(..., gt=0)
     price: Optional[float] = Field(None, ge=0)
+    leverage: float = Field(1.0, ge=1.0, le=1000.0)
 
 
 @router.get("/orders")
@@ -37,6 +39,26 @@ async def list_orders():
 
 @router.post("/orders")
 async def create_order(req: OrderCreateRequest):
+    order_dict = req.model_dump()
+
+    # 1. Risk check — runs before anything else
+    try:
+        await risk_engine.check_order(order_dict)
+    except RiskCheckError:
+        raise  # Re-raise with 422
+
+    # 2. Live routing when adapter is connected
+    exchange_order_id = None
+    if live_manager.is_connected():
+        try:
+            exchange_result = await live_manager.submit_order(order_dict)
+            exchange_order_id = exchange_result.get("exchange_order_id")
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Exchange error: {str(exc)}")
+
+    # 3. Persist order to DB (paper mode when no adapter, live mode otherwise)
     order = await database.create_order(
         instrument=req.instrument,
         side=req.side,
@@ -44,12 +66,25 @@ async def create_order(req: OrderCreateRequest):
         quantity=req.quantity,
         price=req.price,
     )
-    return {"success": True, "order": order}
+    result: Dict[str, Any] = {"success": True, "order": order}
+    if exchange_order_id:
+        result["exchange_order_id"] = exchange_order_id
+    return result
 
 
 @router.delete("/orders/{order_id}")
 async def cancel_order(order_id: str):
+    # If adapter is connected, also cancel on exchange
+    if live_manager.is_connected():
+        try:
+            await live_manager.cancel_order(order_id)
+        except Exception:
+            pass  # Exchange cancel failure should not prevent DB cancel
+
     cancelled = await database.cancel_order(order_id)
     if not cancelled:
+        # Still return success if connected (exchange order may not be in DB)
+        if live_manager.is_connected():
+            return {"success": True, "message": f"Order {order_id} cancel sent to exchange"}
         raise HTTPException(status_code=404, detail=f"Order {order_id} not found or already closed")
     return {"success": True, "message": f"Order {order_id} cancelled"}

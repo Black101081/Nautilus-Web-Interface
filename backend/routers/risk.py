@@ -41,8 +41,19 @@ async def get_risk_metrics():
         for p in open_positions
     )
 
-    # Simplified 95% VaR estimate: exposure * max_drawdown% * 1.65 (normal 95th percentile)
+    # Simplified 95% VaR estimate
     var_95 = total_exposure * (max_drawdown / 100.0) * 1.65 if total_exposure > 0 else 0.0
+
+    # Daily risk metrics (Sprint 3)
+    daily_realized_loss = await database.get_daily_realized_loss()
+    orders_today = await database.count_orders_today()
+
+    # Limit utilization
+    limits = await database.get_risk_limits()
+    max_pos = float(limits.get("max_position_size", 0))
+    max_daily_loss = float(limits.get("max_daily_loss", 0))
+    position_size_utilization = (total_exposure / max_pos) if max_pos > 0 else 0.0
+    daily_loss_utilization = (abs(daily_realized_loss) / max_daily_loss) if max_daily_loss > 0 else 0.0
 
     return {
         "total_exposure": round(total_exposure, 2),
@@ -52,4 +63,9 @@ async def get_risk_metrics():
         "total_pnl": total_pnl,
         "total_trades": total_trades,
         "open_positions": len(open_positions),
+        # Sprint 3 additions
+        "daily_realized_loss": round(daily_realized_loss, 2),
+        "orders_today": orders_today,
+        "position_size_utilization": round(position_size_utilization, 4),
+        "daily_loss_utilization": round(daily_loss_utilization, 4),
     }

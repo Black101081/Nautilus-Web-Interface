@@ -5,7 +5,7 @@ Replaces the in-memory dicts that were lost on every server restart.
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -29,13 +29,22 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "environment": "Development",
     },
     "notifications": {
-        "email_enabled": True,
+        "email_enabled": False,
+        "email_to": "",
+        "smtp_host": "",
+        "smtp_port": 587,
+        "smtp_user": "",
+        "smtp_password": "",
+        "smtp_from": "",
+        "telegram_enabled": False,
+        "telegram_bot_token": "",
+        "telegram_chat_id": "",
         "slack_enabled": False,
         "sms_enabled": False,
     },
     "security": {
         "session_timeout": 30,
-        "two_factor_auth": True,
+        "two_factor_auth": False,
     },
     "performance": {
         "max_concurrent_requests": 100,
@@ -53,15 +62,18 @@ async def init_db() -> None:
         await db.executescript(
             """
             CREATE TABLE IF NOT EXISTS orders (
-                id          TEXT PRIMARY KEY,
-                instrument  TEXT NOT NULL,
-                side        TEXT NOT NULL,
-                type        TEXT NOT NULL DEFAULT 'MARKET',
-                quantity    REAL NOT NULL DEFAULT 0,
-                price       REAL,
-                status      TEXT NOT NULL DEFAULT 'PENDING',
-                filled_qty  REAL NOT NULL DEFAULT 0,
-                timestamp   TEXT NOT NULL
+                id                  TEXT PRIMARY KEY,
+                instrument          TEXT NOT NULL,
+                side                TEXT NOT NULL,
+                type                TEXT NOT NULL DEFAULT 'MARKET',
+                quantity            REAL NOT NULL DEFAULT 0,
+                price               REAL,
+                status              TEXT NOT NULL DEFAULT 'PENDING',
+                filled_qty          REAL NOT NULL DEFAULT 0,
+                pnl                 REAL DEFAULT 0,
+                strategy_id         TEXT,
+                exchange_order_id   TEXT,
+                timestamp           TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS alerts (
@@ -123,6 +135,25 @@ async def init_db() -> None:
                 updated_at      TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS users (
+                id              TEXT PRIMARY KEY,
+                username        TEXT UNIQUE NOT NULL,
+                hashed_password TEXT NOT NULL,
+                role            TEXT NOT NULL DEFAULT 'trader',
+                is_active       INTEGER NOT NULL DEFAULT 1,
+                created_at      TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT,
+                action      TEXT NOT NULL,
+                resource    TEXT,
+                details     TEXT,
+                ip_address  TEXT,
+                timestamp   TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_orders_status    ON orders(status);
             CREATE INDEX IF NOT EXISTS idx_orders_timestamp ON orders(timestamp);
             CREATE INDEX IF NOT EXISTS idx_alerts_symbol    ON alerts(symbol);
@@ -134,6 +165,19 @@ async def init_db() -> None:
             """
         )
         await db.commit()
+
+        # Idempotent column migrations
+        for migration in [
+            "ALTER TABLE orders ADD COLUMN pnl REAL DEFAULT 0",
+            "ALTER TABLE orders ADD COLUMN strategy_id TEXT",
+            "ALTER TABLE orders ADD COLUMN exchange_order_id TEXT",
+        ]:
+            try:
+                await db.execute(migration)
+                await db.commit()
+            except Exception:
+                pass  # Column already exists
+
         await _seed_defaults(db)
 
 
@@ -269,7 +313,19 @@ async def trigger_alert(alert_id: str) -> bool:
             (now, alert_id),
         )
         await db.commit()
-        return cur.rowcount > 0
+        updated = cur.rowcount > 0
+
+    if updated:
+        # Fetch alert and send notifications (best-effort)
+        try:
+            alert = await _get_alert_by_id(alert_id)
+            if alert:
+                import notifications  # lazy import to avoid circular at module load
+                await notifications.notify_alert_triggered(alert)
+        except Exception:
+            pass  # Notifications are best-effort; never crash the trigger
+
+    return updated
 
 
 async def dismiss_alert(alert_id: str) -> bool:
@@ -517,5 +573,108 @@ async def set_component_state(component_id: str, status: str) -> None:
                 updated_at = excluded.updated_at
             """,
             (component_id, status, now),
+        )
+        await db.commit()
+
+
+# ── Low-level helpers ──────────────────────────────────────────────────────────
+
+async def _execute(sql: str, params: tuple = (), *, commit: bool = False) -> None:
+    """Execute a raw SQL statement. Used by tests to inject test data."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(sql, params)
+        if commit:
+            await db.commit()
+
+
+async def _get_alert_by_id(alert_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch a single alert by ID."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM alerts WHERE id=?", (alert_id,)) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+# ── Adapter helpers ────────────────────────────────────────────────────────────
+
+async def has_connected_adapter() -> bool:
+    """Return True if any adapter in DB has status='connected'."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM adapter_configs WHERE status='connected'"
+        ) as cur:
+            row = await cur.fetchone()
+    return (row[0] if row else 0) > 0
+
+
+# ── Risk helpers ───────────────────────────────────────────────────────────────
+
+async def get_daily_realized_loss() -> float:
+    """
+    Return the total realized loss from filled orders today (UTC).
+    Loss is a negative number; we return its absolute value is implied by callers.
+    """
+    today = date.today().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT COALESCE(SUM(pnl), 0) FROM orders
+               WHERE status='filled' AND date(timestamp)=? AND pnl < 0""",
+            (today,),
+        ) as cur:
+            row = await cur.fetchone()
+    return float(row[0]) if row else 0.0
+
+
+async def count_orders_today() -> int:
+    """Return the number of orders created today (UTC)."""
+    today = date.today().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM orders WHERE date(timestamp)=?",
+            (today,),
+        ) as cur:
+            row = await cur.fetchone()
+    return int(row[0]) if row else 0
+
+
+# ── Users ──────────────────────────────────────────────────────────────────────
+
+async def get_user(username: str) -> Optional[Dict[str, Any]]:
+    """Fetch a user by username."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM users WHERE username=? AND is_active=1", (username,)
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+# ── Audit log ──────────────────────────────────────────────────────────────────
+
+async def log_action(
+    action: str,
+    user_id: str = "",
+    resource: str = "",
+    details: str = "",
+    ip_address: str = "",
+) -> None:
+    """Append an audit log entry."""
+    import uuid as _uuid
+    entry = {
+        "id": f"AUD-{_uuid.uuid4().hex[:8].upper()}",
+        "user_id": user_id,
+        "action": action,
+        "resource": resource,
+        "details": details,
+        "ip_address": ip_address,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO audit_logs (id, user_id, action, resource, details, ip_address, timestamp)
+               VALUES (:id, :user_id, :action, :resource, :details, :ip_address, :timestamp)""",
+            entry,
         )
         await db.commit()

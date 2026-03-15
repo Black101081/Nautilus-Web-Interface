@@ -104,6 +104,20 @@ class NautilusTradingSystem:
             "backtests_count": len(self.backtest_results)
         }
     
+    def start_strategy(self, strategy_id: str) -> bool:
+        """Mark strategy as running. Called by the strategies router on start."""
+        if strategy_id in self.strategies:
+            self.strategies[strategy_id]["status"] = "running"
+            return True
+        return False
+
+    def stop_strategy(self, strategy_id: str) -> bool:
+        """Mark strategy as stopped. Called by the strategies router on stop."""
+        if strategy_id in self.strategies:
+            self.strategies[strategy_id]["status"] = "stopped"
+            return True
+        return False
+
     def create_strategy(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Create a real Nautilus strategy.

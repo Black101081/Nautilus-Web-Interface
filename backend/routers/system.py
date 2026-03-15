@@ -6,7 +6,7 @@ import httpx
 from fastapi import APIRouter, Body
 
 import database
-from state import nautilus_system
+from state import live_manager, nautilus_system
 from utils import normalize_order
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -71,16 +71,24 @@ async def health_check():
 @router.get("/engine/info")
 async def get_engine_info():
     info = nautilus_system.get_system_info()
+    live_status = live_manager.get_status()
+
+    # Check live mode: live_manager OR any DB adapter is connected
+    db_connected = await database.has_connected_adapter()
+    is_live = live_status["is_active"] or db_connected
+
     return {
         "trader_id": info["trader_id"],
         "status": "running" if info["is_initialized"] else "initializing",
-        "engine_type": "BacktestEngine",
+        "engine_type": "live" if is_live else "backtest",
         "is_running": info["is_initialized"],
         "strategies_count": info["strategies_count"],
         "backtests_count": len(nautilus_system.backtest_results),
         "is_initialized": info["is_initialized"],
         "catalog_path": info["catalog_path"],
         "uptime": "active",
+        "live_node_active": is_live,
+        "live_connections": live_status["connections"],
     }
 
 
@@ -192,6 +200,48 @@ async def list_trades(limit: int = 20):
             row["timestamp"] = datetime.now(timezone.utc).isoformat()
             all_trades.append(row)
     return {"trades": all_trades[:limit], "count": len(all_trades)}
+
+
+@router.post("/notifications/test-email")
+async def test_email(body: Dict[str, Any] = Body(...)):
+    """Send a test email to verify SMTP configuration."""
+    from notifications import EmailNotifier
+    settings_data = await database.get_settings()
+    notif = settings_data.get("notifications", {})
+    to_addr = body.get("email", notif.get("email_to", ""))
+    if not to_addr:
+        return {"success": False, "error": "No email address provided"}
+    try:
+        notifier = EmailNotifier()
+        await notifier.send(
+            subject="Test Email from Nautilus Trader",
+            body="<p>Test email sent successfully from Nautilus Web Interface!</p>",
+            to=to_addr,
+            settings=notif,
+        )
+        return {"success": True, "message": f"Test email sent to {to_addr}"}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@router.post("/notifications/test-telegram")
+async def test_telegram(body: Dict[str, Any] = Body(...)):
+    """Send a test Telegram message to verify bot configuration."""
+    from notifications import TelegramNotifier
+    bot_token = body.get("bot_token", "")
+    chat_id = body.get("chat_id", "")
+    if not bot_token or not chat_id:
+        return {"success": False, "error": "bot_token and chat_id are required"}
+    try:
+        notifier = TelegramNotifier()
+        await notifier.send(
+            text="✅ Test message from Nautilus Web Interface",
+            bot_token=bot_token,
+            chat_id=chat_id,
+        )
+        return {"success": True, "message": "Telegram message sent"}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
 
 
 @router.get("/instruments")

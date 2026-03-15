@@ -43,3 +43,7 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+from live_trading import LiveTradingManager  # noqa: E402
+
+live_manager = LiveTradingManager()

@@ -8,21 +8,25 @@ import json
 import os
 import sys
 import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Ensure backend dir is on the path so routers can import sibling modules
 sys.path.insert(0, str(Path(__file__).parent))
 
 import database
 from auth import ApiKeyMiddleware
+from auth_jwt import decode_token
 from routers import (
     adapters,
     alerts,
+    auth as auth_router_module,
     backtest,
     components,
     database_ops,
@@ -86,6 +90,116 @@ app.add_middleware(
 # API key auth (enabled when API_KEY env var is set)
 app.add_middleware(ApiKeyMiddleware)
 
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+
+_GLOBAL_RATE_LIMIT = int(os.getenv("RATE_LIMIT_PER_MINUTE", "200"))
+_LOGIN_RATE_LIMIT = int(os.getenv("LOGIN_RATE_LIMIT_PER_MINUTE", "5"))
+
+# Per-IP sliding window counters: {ip: {"count": N, "window_start": T}}
+_global_counters: dict = defaultdict(lambda: {"count": 0, "window_start": 0.0})
+_login_counters: dict = defaultdict(lambda: {"count": 0, "window_start": 0.0})
+
+
+def _check_rate_limit(counters: dict, key: str, limit: int, now: float) -> tuple[int, bool]:
+    """
+    Check and update a rate-limit counter.
+    Returns (remaining, is_exceeded).
+    """
+    state = counters[key]
+    if now - state["window_start"] >= 60.0:
+        state["count"] = 0
+        state["window_start"] = now
+    state["count"] += 1
+    remaining = max(0, limit - state["count"])
+    return remaining, state["count"] > limit
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    client_ip = (request.client.host if request.client else "unknown") or "unknown"
+    now = time.time()
+
+    # Tight limit on login endpoint
+    if request.url.path == "/api/auth/login":
+        _, exceeded = _check_rate_limit(_login_counters, client_ip, _LOGIN_RATE_LIMIT, now)
+        if exceeded:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Retry after 60 seconds."},
+                headers={"Retry-After": "60", "X-RateLimit-Remaining": "0"},
+            )
+
+    # Global rate limit (applied to all routes)
+    remaining, exceeded = _check_rate_limit(_global_counters, client_ip, _GLOBAL_RATE_LIMIT, now)
+    if exceeded:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Global rate limit exceeded. Retry after 60 seconds."},
+            headers={"Retry-After": "60", "X-RateLimit-Remaining": "0"},
+        )
+
+    response = await call_next(request)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    return response
+
+
+# ── JWT authentication middleware ─────────────────────────────────────────────
+
+# Paths that are always public (no token required)
+_PUBLIC_PATHS = frozenset(
+    [
+        "/",
+        "/health",
+        "/api/health",
+        "/api/auth/login",
+        "/api/auth/refresh",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/ws",
+    ]
+)
+
+
+@app.middleware("http")
+async def jwt_middleware(request: Request, call_next):
+    path = request.url.path
+
+    # Allow public paths and non-API routes
+    if path in _PUBLIC_PATHS or not path.startswith("/api/"):
+        return await call_next(request)
+
+    # Auth router sub-paths are public
+    if path.startswith("/api/auth/"):
+        return await call_next(request)
+
+    # Skip JWT check when a valid API key is already provided (alternative auth)
+    from auth import API_KEY
+    import secrets as _secrets
+    api_key_header = request.headers.get("X-API-Key", "")
+    if API_KEY and api_key_header and _secrets.compare_digest(api_key_header, API_KEY):
+        return await call_next(request)
+
+    # Check for valid Bearer token
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing authentication token"},
+        )
+
+    token = auth_header[7:]
+    payload = decode_token(token)
+    if not payload:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid or expired token"},
+        )
+
+    request.state.user = payload
+    return await call_next(request)
+
+
 # Request counter middleware
 @app.middleware("http")
 async def _count_requests(request: Request, call_next):
@@ -95,6 +209,7 @@ async def _count_requests(request: Request, call_next):
 
 # ── Include routers ───────────────────────────────────────────────────────────
 
+app.include_router(auth_router_module.router)
 app.include_router(strategies.router)
 app.include_router(orders.router)
 app.include_router(positions.router)

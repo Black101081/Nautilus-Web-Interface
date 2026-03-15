@@ -34,6 +34,10 @@ def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from nautilus_fastapi import app
     with TestClient(app) as c:
+        login_r = c.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        if login_r.status_code == 200:
+            token = login_r.json()["access_token"]
+            c.headers.update({"Authorization": f"Bearer {token}"})
         yield c
 
 

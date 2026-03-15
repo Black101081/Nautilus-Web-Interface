@@ -19,15 +19,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    """Create a test client with an isolated SQLite database."""
+    """Create an authenticated test client with an isolated SQLite database."""
     import database
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
 
-    # FastAPI TestClient (sync wrapper around async app)
     from fastapi.testclient import TestClient
     from nautilus_fastapi import app
 
     with TestClient(app) as c:
+        # Auto-authenticate so tests work after JWT middleware is added
+        login_r = c.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        if login_r.status_code == 200:
+            token = login_r.json()["access_token"]
+            c.headers.update({"Authorization": f"Bearer {token}"})
         yield c
 
 
@@ -493,12 +497,18 @@ def authed_client(monkeypatch, tmp_path):
     from nautilus_fastapi import app
 
     with TestClient(app, raise_server_exceptions=False) as c:
+        login_r = c.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        if login_r.status_code == 200:
+            token = login_r.json()["access_token"]
+            c.headers.update({"Authorization": f"Bearer {token}"})
         yield c
 
 
 def test_auth_enabled_blocks_without_key(authed_client):
     """With API_KEY set, requests without the header should get 401."""
-    r = authed_client.get("/api/strategies")
+    # When API_KEY env is active, requests without the key are blocked.
+    # We need to temporarily strip the Authorization header to test this.
+    r = authed_client.get("/api/strategies", headers={"Authorization": "", "X-API-Key": ""})
     assert r.status_code == 401
 
 

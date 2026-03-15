@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import database
+from credential_utils import encrypt_credential, mask_credential
+from state import live_manager
 
 router = APIRouter(prefix="/api", tags=["adapters"])
 
@@ -129,11 +131,29 @@ async def _enrich(adapter: dict) -> dict:
     status = cfg["status"] if cfg else "disconnected"
     last_connected = cfg["last_connected"] if cfg else None
     has_credentials = bool(cfg and cfg.get("api_key"))
+
+    # Masked key: show last 4 chars only — never expose plaintext
+    api_key_masked = ""
+    if cfg and cfg.get("api_key"):
+        from credential_utils import decrypt_credential, mask_credential
+        decrypted = decrypt_credential(cfg["api_key"])
+        api_key_masked = mask_credential(decrypted) if decrypted else "****"
+
+    # Connection ID from extra_config
+    extra = {}
+    try:
+        import json
+        extra = json.loads(cfg.get("extra_config", "{}")) if cfg else {}
+    except Exception:
+        pass
+
     return {
         **adapter,
         "status": status,
         "last_connected": last_connected,
         "has_credentials": has_credentials,
+        "api_key_masked": api_key_masked,
+        "connection_id": extra.get("connection_id"),
     }
 
 
@@ -155,11 +175,8 @@ async def get_adapter(adapter_id: str):
 @router.post("/adapters/{adapter_id}/connect")
 async def connect_adapter(adapter_id: str, req: AdapterConnectRequest):
     """
-    Validate credentials format and mark adapter as 'connected'.
-
-    Note: BacktestEngine mode does not establish real exchange connections.
-    Credentials are stored (api_key only) for display purposes.
-    A LiveTradingNode integration is required for real-time order routing.
+    Validate credentials, encrypt, and connect adapter.
+    For Binance: activates LiveTradingNode via live_manager.
     """
     if adapter_id not in _ADAPTER_BY_ID:
         raise HTTPException(status_code=404, detail=f"Adapter '{adapter_id}' not found")
@@ -167,7 +184,7 @@ async def connect_adapter(adapter_id: str, req: AdapterConnectRequest):
     meta = _ADAPTER_BY_ID[adapter_id]
     required = meta.get("credential_fields", [])
 
-    # Validate required fields are present and non-empty
+    # Validate required fields are present, non-empty, and no null bytes
     missing = [f for f in required if not getattr(req, f, None)]
     if missing:
         raise HTTPException(
@@ -175,27 +192,71 @@ async def connect_adapter(adapter_id: str, req: AdapterConnectRequest):
             detail=f"Missing required credentials: {', '.join(missing)}",
         )
 
+    api_key = (req.api_key or "").replace("\x00", "")
+    api_secret = (req.api_secret or "").replace("\x00", "")
+
+    # Reject oversized credentials
+    if len(api_key) > 512 or len(api_secret) > 512:
+        raise HTTPException(status_code=400, detail="Credential too long (max 512 chars)")
+
+    # Encrypt credentials before storing
+    from credential_utils import encrypt_credential
+    encrypted_key = encrypt_credential(api_key) if api_key else ""
+    encrypted_secret = encrypt_credential(api_secret) if api_secret else ""
+
+    # Mark as "connecting" before attempting real connection
     await database.upsert_adapter_config(
         adapter_id=adapter_id,
-        status="connected",
-        api_key=req.api_key,
-        api_secret=req.api_secret,
+        status="connecting",
+        api_key=encrypted_key,
+        api_secret=encrypted_secret,
     )
 
-    return {
-        "success": True,
-        "adapter_id": adapter_id,
-        "status": "connected",
-        "message": f"Adapter '{meta['name']}' credentials saved. "
-                   "Live execution requires LiveTradingNode integration.",
-        "last_connected": datetime.now(timezone.utc).isoformat(),
-    }
+    # Try to activate live trading node
+    connection_id = None
+    try:
+        if adapter_id in ("binance", "binance_futures"):
+            result = await live_manager.connect_binance(api_key, api_secret)
+            connection_id = result.get("connection_id")
+        elif adapter_id == "bybit":
+            result = await live_manager.connect_bybit(api_key, api_secret)
+            connection_id = result.get("connection_id")
+        # Other adapters: store credentials only (no live node yet)
+
+        import json
+        extra = {"connection_id": connection_id} if connection_id else {}
+        await database.upsert_adapter_config(
+            adapter_id=adapter_id,
+            status="connected",
+            api_key=encrypted_key,
+            api_secret=encrypted_secret,
+            extra_config=extra,
+        )
+        return {
+            "success": True,
+            "adapter_id": adapter_id,
+            "status": "connected",
+            "connection_id": connection_id,
+            "message": f"Adapter '{meta['name']}' connected.",
+            "last_connected": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        await database.upsert_adapter_config(
+            adapter_id=adapter_id,
+            status="error",
+            api_key=encrypted_key,
+            api_secret=encrypted_secret,
+        )
+        raise HTTPException(status_code=502, detail=f"Connection failed: {str(exc)}")
 
 
 @router.post("/adapters/{adapter_id}/disconnect")
 async def disconnect_adapter(adapter_id: str):
     if adapter_id not in _ADAPTER_BY_ID:
         raise HTTPException(status_code=404, detail=f"Adapter '{adapter_id}' not found")
+
+    # Disconnect from live trading manager
+    await live_manager.disconnect(adapter_id)
 
     await database.upsert_adapter_config(
         adapter_id=adapter_id,

@@ -15,7 +15,7 @@ from fastapi import APIRouter
 
 import database
 import market_data_service as svc
-from state import nautilus_system
+from state import live_manager, nautilus_system
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["positions"])
@@ -70,18 +70,67 @@ async def list_positions():
     # Primary: DB-persisted positions (survive restarts, reflect latest backtest)
     db_positions = await database.list_db_positions(open_only=True)
 
+    # Determine data source
+    source = "live" if live_manager.is_connected() else "cached"
+
     if db_positions:
-        return await _enrich_current_prices(db_positions)
+        enriched = await _enrich_current_prices(db_positions)
+        for pos in enriched:
+            pos["source"] = source
+        return enriched
 
     # Fallback: in-memory backtest results (before first backtest persists to DB)
     all_positions = []
     for results in nautilus_system.backtest_results.values():
         all_positions.extend(results.get("positions", []))
     open_pos = [p for p in all_positions if p.get("is_open", False)]
-    return await _enrich_current_prices(open_pos)
+    enriched = await _enrich_current_prices(open_pos)
+    for pos in enriched:
+        pos["source"] = source
+    return enriched
+
+
+@router.post("/positions/sync")
+async def sync_positions():
+    """Sync open positions from the connected exchange."""
+    live_positions = await live_manager.sync_positions()
+
+    # Persist synced positions to DB
+    if live_positions:
+        await database.save_positions(live_positions)
+
+    return {
+        "success": True,
+        "synced_count": len(live_positions),
+        "positions": live_positions,
+    }
 
 
 @router.post("/positions/{position_id}/close")
 async def close_position(position_id: str):
+    # If adapter connected, send a close order to the exchange
+    if live_manager.is_connected():
+        try:
+            # Fetch position from DB to get side/instrument
+            positions = await database.list_db_positions(open_only=False)
+            target = next((p for p in positions if p["id"] == position_id), None)
+            close_side = "SELL"
+            instrument = "UNKNOWN"
+            quantity = 0.0
+            if target:
+                instrument = target.get("instrument", "UNKNOWN")
+                quantity = float(target.get("quantity", 0))
+                pos_side = str(target.get("side", "LONG")).upper()
+                close_side = "SELL" if "LONG" in pos_side or "BUY" in pos_side else "BUY"
+
+            await live_manager.submit_order({
+                "instrument": instrument,
+                "side": close_side,
+                "type": "MARKET",
+                "quantity": quantity,
+            })
+        except Exception as exc:
+            logger.warning("Exchange close order failed: %s", exc)
+
     closed = await database.close_db_position(position_id)
     return {"success": True, "closed_in_db": closed, "message": f"Position {position_id} closed"}
