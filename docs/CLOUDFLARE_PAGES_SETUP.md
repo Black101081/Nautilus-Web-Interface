@@ -1,174 +1,80 @@
 # Cloudflare Pages Setup Guide
 
-## Quick Setup (5 Minutes)
+Deploy the React frontend to Cloudflare Pages in ~5 minutes.
 
-### Step 1: Connect GitHub Repository
+> The FastAPI backend must be hosted separately (VPS, Railway, Render, etc.).
+> See [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) for backend deployment options.
+
+---
+
+## Step 1 — Connect GitHub Repository
 
 1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. Navigate to **Workers & Pages** → **Create Application** → **Pages**
-3. Click **Connect to Git**
-4. Select **GitHub** and authorize Cloudflare
-5. Select repository: `Black101081/Nautilus-Web-Interface`
+2. **Workers & Pages** → **Create Application** → **Pages** → **Connect to Git**
+3. Select GitHub and authorize Cloudflare
+4. Choose repository: `Black101081/Nautilus-Web-Interface`
 
-### Step 2: Configure Build Settings
+---
 
-**Framework preset**: None (Custom)
+## Step 2 — Build Settings
 
-**Build configuration**:
-- **Build command**: `cd frontend && npm install && npm run build`
-- **Build output directory**: `frontend/dist`
-- **Root directory**: `/` (leave empty)
+| Setting | Value |
+|---------|-------|
+| Framework preset | None (Custom) |
+| Build command | `cd frontend && npm ci && npm run build` |
+| Build output directory | `frontend/dist` |
+| Root directory | _(leave empty)_ |
+| Node.js version | `18` |
 
-**Environment variables**:
-- Name: `VITE_API_URL`
-- Value: `https://your-api-domain.com` (your backend URL)
+---
 
-### Step 3: Deploy
+## Step 3 — Environment Variables
 
-1. Click **Save and Deploy**
-2. Wait for build to complete (~2-3 minutes)
-3. Your site will be live at: `https://nautilus-web-interface.pages.dev`
+Add these in the Cloudflare Pages **Environment variables** section:
 
-### Step 4: Custom Domain (Optional)
+| Name | Value |
+|------|-------|
+| `VITE_NAUTILUS_API_URL` | `https://your-backend-api.com` |
+| `VITE_WS_URL` | `wss://your-backend-api.com` |
+| `VITE_API_KEY` | _(your API key, if `API_KEY` is set on the backend)_ |
+| `NODE_VERSION` | `18` |
 
-1. Go to **Custom domains** tab
-2. Click **Set up a custom domain**
-3. Enter your domain (e.g., `admin.yourdomain.com`)
-4. Follow DNS configuration instructions
+> `VITE_ADMIN_DB_API_URL` defaults to `http://localhost:8001` if not set.
+> Set it if you deploy the admin DB API separately.
 
-## Advanced Configuration
+**Important**: environment variables for Vite must start with `VITE_`. Rebuild the deployment after adding or changing variables.
 
-### Build Settings
+---
 
-For optimal performance, use these settings:
+## Step 4 — Deploy
 
-```yaml
-Build command: cd frontend && npm ci && npm run build
-Build output directory: frontend/dist
-Root directory: (leave empty)
-Node version: 18
-```
+Click **Save and Deploy**. Build takes ~2 minutes.
 
-### Environment Variables
+Your site will be live at `https://nautilus-web-interface.pages.dev`.
 
-Add these in Cloudflare Pages dashboard:
+---
 
-```
-VITE_API_URL=https://your-backend-api.com
-NODE_VERSION=18
-```
+## Custom Domain (Optional)
 
-### Preview Deployments
+1. Go to the **Custom domains** tab in your Pages project
+2. Click **Set up a custom domain** (e.g. `app.yourdomain.com`)
+3. Follow the DNS instructions
+4. Cloudflare auto-provisions an SSL certificate
 
-Cloudflare automatically creates preview deployments for:
-- Pull requests
-- Non-production branches
-
-Access previews at: `https://[commit-hash].nautilus-web-interface.pages.dev`
+---
 
 ## Continuous Deployment
 
-Cloudflare Pages automatically deploys when you push to GitHub:
+Cloudflare Pages deploys automatically on every push:
 
-1. **Push to main branch** → Production deployment
-2. **Push to other branches** → Preview deployment
-3. **Create pull request** → Preview deployment with comment
+- **`main` branch** → Production deployment (`*.pages.dev`)
+- **Other branches / PRs** → Preview deployments (`[commit-hash].*.pages.dev`)
 
-## Backend Deployment
-
-Your FastAPI backend needs separate hosting. Options:
-
-### Option 1: Cloudflare Workers (Recommended)
-
-Convert FastAPI to Workers:
-```bash
-# Install wrangler
-npm install -g wrangler
-
-# Create worker
-wrangler init nautilus-api
-
-# Deploy
-wrangler publish
-```
-
-### Option 2: Traditional Hosting
-
-Deploy backend to:
-- **DigitalOcean** - $5/month droplet
-- **AWS EC2** - t2.micro free tier
-- **Heroku** - Free tier available
-- **Railway** - Free tier with GitHub integration
-
-### Option 3: Docker Container
-
-Deploy to:
-- **Google Cloud Run** - Pay per use
-- **AWS ECS** - Container service
-- **Azure Container Instances**
-
-## DNS Configuration
-
-If using custom domain:
-
-1. **For Cloudflare DNS**:
-   - CNAME record automatically added
-   - SSL certificate auto-provisioned
-
-2. **For External DNS**:
-   - Add CNAME: `admin.yourdomain.com` → `nautilus-web-interface.pages.dev`
-   - Wait for DNS propagation (up to 48 hours)
-
-## SSL/HTTPS
-
-Cloudflare Pages provides:
-- ✅ Free SSL certificate
-- ✅ Auto-renewal
-- ✅ HTTP/2 and HTTP/3 support
-- ✅ Always HTTPS redirect
-
-## Performance Optimization
-
-Cloudflare Pages includes:
-- Global CDN (200+ locations)
-- Automatic asset optimization
-- Brotli compression
-- Smart caching
-
-## Monitoring
-
-View deployment logs and analytics:
-1. Go to **Workers & Pages** → **nautilus-web-interface**
-2. Click **View details** on any deployment
-3. Check **Functions logs** and **Analytics**
-
-## Troubleshooting
-
-### Build Fails
-
-Check build logs in Cloudflare dashboard:
-```bash
-# Common issues:
-- Missing dependencies → Check package.json
-- Wrong Node version → Set NODE_VERSION=18
-- Build command error → Verify build command
-```
-
-### Environment Variables Not Working
-
-1. Verify variable name starts with `VITE_`
-2. Rebuild after adding variables
-3. Check variable is used in code
-
-### API Connection Fails
-
-1. Check CORS settings in backend
-2. Verify API URL in environment variables
-3. Test API endpoint directly
+---
 
 ## GitHub Actions (Optional)
 
-To add automated workflows, create `.github/workflows/deploy.yml`:
+For more control, add `.github/workflows/deploy.yml`:
 
 ```yaml
 name: Deploy to Cloudflare Pages
@@ -190,6 +96,10 @@ jobs:
         run: |
           npm ci
           npm run build
+        env:
+          VITE_NAUTILUS_API_URL: ${{ secrets.VITE_NAUTILUS_API_URL }}
+          VITE_WS_URL: ${{ secrets.VITE_WS_URL }}
+          VITE_API_KEY: ${{ secrets.VITE_API_KEY }}
       - name: Deploy
         uses: cloudflare/pages-action@v1
         with:
@@ -199,37 +109,39 @@ jobs:
           directory: frontend/dist
 ```
 
-**Note**: You'll need to add this file manually via GitHub web interface or with proper permissions.
-
-## Cost
-
-Cloudflare Pages is **FREE** for:
-- Unlimited requests
-- Unlimited bandwidth
-- 500 builds per month
-- 1 concurrent build
-
-## Next Steps
-
-After deployment:
-
-1. ✅ Test your live site
-2. ✅ Configure custom domain
-3. ✅ Deploy backend API
-4. ✅ Update API_URL in Cloudflare Pages
-5. ✅ Test end-to-end integration
-
-## Support
-
-- [Cloudflare Pages Docs](https://developers.cloudflare.com/pages/)
-- [Cloudflare Community](https://community.cloudflare.com/)
-- [GitHub Issues](https://github.com/Black101081/Nautilus-Web-Interface/issues)
+Store secrets in **GitHub → Settings → Secrets and variables → Actions**.
 
 ---
 
-**Your site will be live at**: `https://nautilus-web-interface.pages.dev`
+## Troubleshooting
 
-**Estimated setup time**: 5-10 minutes
+### Build fails — missing dependencies
+Check that `package.json` is up to date and `node_modules` is in `.gitignore`.
 
-**Status**: Ready to deploy! 🚀
+### Build fails — wrong Node version
+Add environment variable `NODE_VERSION=18` in the Cloudflare Pages dashboard.
 
+### API calls fail (network error / CORS)
+1. Verify `VITE_NAUTILUS_API_URL` points to your live backend
+2. Verify backend `CORS_ORIGINS` includes your `*.pages.dev` URL
+3. Rebuild the Cloudflare Pages deployment after changing environment variables
+
+### WebSocket not connecting
+Use `wss://` (not `ws://`) in `VITE_WS_URL` when the backend has HTTPS/TLS.
+
+---
+
+## Cloudflare Pages — Free Tier Limits
+
+| Feature | Limit |
+|---------|-------|
+| Requests | Unlimited |
+| Bandwidth | Unlimited |
+| Builds per month | 500 |
+| Concurrent builds | 1 |
+
+Includes free SSL, global CDN (300+ locations), HTTP/3, and Brotli compression.
+
+---
+
+**Last Updated**: March 2026

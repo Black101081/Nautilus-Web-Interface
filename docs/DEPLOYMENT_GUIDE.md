@@ -1,64 +1,80 @@
-# Nautilus Trader Admin - Deployment Guide
+# Deployment Guide
 
-## Quick Deployment (5 Minutes)
+## Prerequisites
 
-### Prerequisites
 - Python 3.11+
-- Node.js 18+ (for frontend)
-- 2GB RAM minimum
+- Node.js 18+
+- 2 GB RAM minimum
 
-### Step 1: Extract Package
+---
+
+## Quick Start (Local Development)
+
 ```bash
-tar -xzf nautilus-admin-complete.tar.gz
-cd nautilus-admin-complete
+# 1. Clone
+git clone https://github.com/Black101081/Nautilus-Web-Interface.git
+cd Nautilus-Web-Interface
+
+# 2. Backend
+cd backend
+pip install -r requirements.txt
+cp .env.example .env          # edit as needed
+python3 nautilus_fastapi.py   # starts on :8000
+
+# 3. Frontend (separate terminal)
+cd frontend
+npm install
+cp .env.example .env          # edit VITE_NAUTILUS_API_URL if needed
+npm run dev                   # starts on :5173
 ```
 
-### Step 2: Install Python Dependencies
+---
+
+## Production — VPS / Dedicated Server
+
+### Automated Script
+
 ```bash
-pip install nautilus_trader fastapi uvicorn
+DOMAIN=yourdomain.com bash deploy_to_vps.sh
 ```
 
-### Step 3: Start Backend
+This script installs all system dependencies, sets up a Python virtualenv, creates systemd services for the backend, builds the React frontend, and configures Nginx.
+
+### Manual Steps
+
+#### 1. Install system dependencies
+
 ```bash
-python3 nautilus_api.py
+sudo apt-get update && sudo apt-get install -y \
+    python3.11 python3.11-venv python3-pip \
+    nodejs npm nginx certbot python3-certbot-nginx git
 ```
 
-Backend will start on `http://localhost:8000`
+#### 2. Python environment
 
-### Step 4: Test API
 ```bash
-curl http://localhost:8000/api/health
+mkdir -p /opt/nautilus-web
+cp -r ~/Nautilus-Web-Interface/* /opt/nautilus-web/
+cd /opt/nautilus-web
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r backend/requirements.txt
 ```
 
-Expected response:
-```json
-{
-  "status": "healthy",
-  "message": "Nautilus Trader Admin API is running"
-}
-```
+#### 3. Environment configuration
 
-### Step 5: Open Test Frontend
-Open `test_api_frontend.html` in your browser to verify integration.
-
-## Production Deployment
-
-### Backend (FastAPI)
-
-#### Option 1: Gunicorn (Recommended)
 ```bash
-pip install gunicorn
-
-gunicorn nautilus_api:app \
-  --workers 4 \
-  --worker-class uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:8000 \
-  --access-logfile - \
-  --error-logfile -
+cat > /opt/nautilus-web/.env << EOF
+CORS_ORIGINS=https://yourdomain.com
+API_KEY=$(openssl rand -hex 32)
+NAUTILUS_API_PORT=8000
+EOF
 ```
 
-#### Option 2: Uvicorn with systemd
+#### 4. systemd service
+
 Create `/etc/systemd/system/nautilus-api.service`:
+
 ```ini
 [Unit]
 Description=Nautilus Trader API
@@ -67,298 +83,189 @@ After=network.target
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/path/to/nautilus-admin
-ExecStart=/usr/bin/python3 nautilus_api.py
+WorkingDirectory=/opt/nautilus-web
+Environment="PATH=/opt/nautilus-web/venv/bin"
+EnvironmentFile=/opt/nautilus-web/.env
+ExecStart=/opt/nautilus-web/venv/bin/python3 backend/nautilus_fastapi.py
 Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Enable and start:
 ```bash
-sudo systemctl enable nautilus-api
-sudo systemctl start nautilus-api
+sudo systemctl daemon-reload
+sudo systemctl enable --now nautilus-api
 ```
 
-#### Option 3: Docker
-Create `Dockerfile`:
-```dockerfile
-FROM python:3.11-slim
+#### 5. Build frontend
 
-WORKDIR /app
-
-RUN pip install nautilus_trader fastapi uvicorn gunicorn
-
-COPY nautilus_api.py .
-COPY nautilus_instance.py .
-
-EXPOSE 8000
-
-CMD ["gunicorn", "nautilus_api:app", \
-     "--workers", "4", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000"]
-```
-
-Build and run:
 ```bash
-docker build -t nautilus-admin-api .
-docker run -d -p 8000:8000 nautilus-admin-api
+cd /opt/nautilus-web/frontend
+cat > .env << EOF
+VITE_NAUTILUS_API_URL=https://yourdomain.com
+VITE_WS_URL=wss://yourdomain.com
+VITE_API_KEY=<same value as server API_KEY>
+EOF
+npm install && npm run build
 ```
 
-### Frontend (React)
+#### 6. Nginx
 
-#### Step 1: Setup Project
-```bash
-cd sprint5-deliverable
-npm install
-```
-
-#### Step 2: Configure API URL
-Create `.env`:
-```env
-VITE_API_URL=http://your-api-domain.com:8000
-```
-
-#### Step 3: Build for Production
-```bash
-npm run build
-```
-
-#### Step 4: Serve with Nginx
-Install nginx:
-```bash
-sudo apt install nginx
-```
-
-Create `/etc/nginx/sites-available/nautilus-admin`:
 ```nginx
 server {
     listen 80;
-    server_name your-domain.com;
+    server_name yourdomain.com;
 
-    root /path/to/nautilus-admin/sprint5-deliverable/dist;
-    index index.html;
-
+    # React SPA
     location / {
+        root /opt/nautilus-web/frontend/dist;
         try_files $uri $uri/ /index.html;
     }
 
-    location /api {
+    # API + WebSocket
+    location /api/ {
+        proxy_pass http://localhost:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /ws {
         proxy_pass http://localhost:8000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
     }
 }
 ```
 
-Enable and restart:
 ```bash
-sudo ln -s /etc/nginx/sites-available/nautilus-admin /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
+sudo ln -sf /etc/nginx/sites-available/nautilus-web /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl restart nginx
+# SSL
+sudo certbot --nginx -d yourdomain.com
 ```
-
-## Environment Variables
-
-### Backend
-No environment variables required for basic setup.
-
-Optional:
-- `NAUTILUS_LOG_LEVEL` - Set log level (default: INFO)
-- `NAUTILUS_PORT` - API port (default: 8000)
-
-### Frontend
-Required in `.env`:
-- `VITE_API_URL` - Backend API URL
-
-## Security Considerations
-
-### 1. CORS Configuration
-Update `nautilus_api.py`:
-```python
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://your-frontend-domain.com"],  # Specific domain
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],  # Specific methods
-    allow_headers=["*"],
-)
-```
-
-### 2. API Authentication
-Add authentication middleware (example with JWT):
-```python
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer
-
-security = HTTPBearer()
-
-async def verify_token(credentials = Depends(security)):
-    # Implement token verification
-    pass
-
-@app.get("/api/protected")
-async def protected_route(token = Depends(verify_token)):
-    # Protected endpoint
-    pass
-```
-
-### 3. HTTPS
-Use Let's Encrypt with Certbot:
-```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-```
-
-## Monitoring
-
-### Health Checks
-```bash
-# API health
-curl http://localhost:8000/api/health
-
-# Engine status
-curl http://localhost:8000/api/nautilus/engine/info
-```
-
-### Logs
-```bash
-# View API logs
-tail -f /var/log/nautilus-api.log
-
-# View nginx logs
-tail -f /var/log/nginx/access.log
-tail -f /var/log/nginx/error.log
-```
-
-### Prometheus Metrics (Optional)
-Add to `nautilus_api.py`:
-```python
-from prometheus_fastapi_instrumentator import Instrumentator
-
-Instrumentator().instrument(app).expose(app)
-```
-
-## Troubleshooting
-
-### API Not Starting
-```bash
-# Check port availability
-sudo lsof -i :8000
-
-# Check Python version
-python3 --version  # Should be 3.11+
-
-# Check dependencies
-pip list | grep nautilus
-pip list | grep fastapi
-```
-
-### Frontend Build Errors
-```bash
-# Clear cache
-rm -rf node_modules package-lock.json
-npm install
-
-# Check Node version
-node --version  # Should be 18+
-```
-
-### CORS Errors
-1. Check `allow_origins` in `nautilus_api.py`
-2. Verify `VITE_API_URL` in frontend `.env`
-3. Check browser console for specific error
-
-### Connection Refused
-1. Verify API is running: `curl http://localhost:8000/api/health`
-2. Check firewall: `sudo ufw status`
-3. Check nginx config: `sudo nginx -t`
-
-## Scaling
-
-### Horizontal Scaling
-Use load balancer (nginx, HAProxy) with multiple API instances:
-```nginx
-upstream nautilus_api {
-    server localhost:8001;
-    server localhost:8002;
-    server localhost:8003;
-}
-
-server {
-    location /api {
-        proxy_pass http://nautilus_api;
-    }
-}
-```
-
-### Database Optimization
-- Use PostgreSQL connection pooling
-- Implement Redis caching
-- Optimize Parquet queries
-
-### CDN for Frontend
-Use Cloudflare, AWS CloudFront, or similar for static assets.
-
-## Backup & Recovery
-
-### Backup Script
-```bash
-#!/bin/bash
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="/backups/nautilus-admin"
-
-# Backup database
-pg_dump nautilus > $BACKUP_DIR/db_$DATE.sql
-
-# Backup config
-tar -czf $BACKUP_DIR/config_$DATE.tar.gz /path/to/config
-
-# Backup logs
-tar -czf $BACKUP_DIR/logs_$DATE.tar.gz /var/log/nautilus-api.log
-```
-
-### Recovery
-```bash
-# Restore database
-psql nautilus < db_backup.sql
-
-# Restore config
-tar -xzf config_backup.tar.gz -C /
-```
-
-## Performance Tuning
-
-### API
-- Increase worker count: `--workers 8`
-- Use Redis for caching
-- Enable gzip compression
-
-### Frontend
-- Enable code splitting
-- Lazy load components
-- Use CDN for assets
-
-### Database
-- Add indexes
-- Optimize queries
-- Use connection pooling
-
-## Support
-
-For issues or questions:
-1. Check logs first
-2. Review documentation
-3. Test with `test_api_frontend.html`
-4. Check GitHub issues (if applicable)
 
 ---
 
-**Version**: 1.0.0
-**Last Updated**: October 19, 2025
+## Production — Docker
 
+```dockerfile
+# backend/Dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+
+EXPOSE 8000
+CMD ["python3", "nautilus_fastapi.py"]
+```
+
+```bash
+docker build -t nautilus-backend ./backend
+docker run -d -p 8000:8000 \
+  -e CORS_ORIGINS=https://yourdomain.com \
+  -e API_KEY=your-secret-key \
+  nautilus-backend
+```
+
+---
+
+## Environment Variables
+
+### Backend (`backend/.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `CORS_ORIGINS` | No | `http://localhost:5173,http://localhost:3000` | Comma-separated allowed origins. **Set this in production.** |
+| `API_KEY` | No | _(blank — auth disabled)_ | Enables API key auth on all endpoints when set. Generate: `openssl rand -hex 32` |
+| `NAUTILUS_API_PORT` | No | `8000` | Server port |
+
+### Frontend (`frontend/.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VITE_NAUTILUS_API_URL` | Yes | `http://localhost:8000` | Backend API base URL |
+| `VITE_ADMIN_DB_API_URL` | No | `http://localhost:8001` | Admin DB API base URL |
+| `VITE_WS_URL` | No | `ws://localhost:8000` | WebSocket URL |
+| `VITE_API_KEY` | No | _(blank)_ | Must match server `API_KEY` when auth is enabled |
+
+---
+
+## Security Checklist
+
+- [ ] Set `CORS_ORIGINS` to your exact frontend domain (not `*`)
+- [ ] Set a strong `API_KEY` (`openssl rand -hex 32`)
+- [ ] Enable HTTPS with Let's Encrypt
+- [ ] Run backend as a non-root user
+- [ ] Keep `backend/data/` outside of web root
+
+---
+
+## Health Check
+
+```bash
+curl https://yourdomain.com/api/health
+# {"status":"healthy","timestamp":"...","service":"nautilus-trader-api","version":"2.0.0"}
+```
+
+## Logs
+
+```bash
+# Backend logs
+sudo journalctl -u nautilus-api -f
+
+# Nginx logs
+sudo tail -f /var/log/nginx/access.log
+sudo tail -f /var/log/nginx/error.log
+```
+
+## Updates
+
+```bash
+cd /opt/nautilus-web
+git pull origin main
+pip install -r backend/requirements.txt    # pick up new dependencies
+cd frontend && npm install && npm run build
+sudo systemctl restart nautilus-api
+```
+
+---
+
+## Troubleshooting
+
+### Backend won't start
+```bash
+# Check port
+sudo lsof -i :8000
+# Check Python version (must be 3.11+)
+python3 --version
+# Check dependencies
+pip show fastapi aiosqlite httpx
+```
+
+### Frontend build fails
+```bash
+# Clear cache
+rm -rf node_modules package-lock.json && npm install
+# Node version must be 18+
+node --version
+```
+
+### CORS errors in browser
+1. Verify `CORS_ORIGINS` matches your frontend URL exactly (no trailing slash)
+2. Verify `VITE_NAUTILUS_API_URL` in frontend `.env`
+3. Rebuild frontend after changing env vars
+
+### WebSocket not connecting
+1. Ensure Nginx `location /ws` block proxies `Upgrade` header
+2. Use `wss://` (not `ws://`) when HTTPS is enabled
+
+---
+
+**Version**: 2.0.0 | **Last Updated**: March 2026
