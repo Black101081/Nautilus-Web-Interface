@@ -54,6 +54,13 @@ async def list_strategies():
     for strategy in strategies:
         br = nautilus_system.get_backtest_results(strategy["id"])
         cfg = strategy.get("config") or {}
+        # cfg may be a Pydantic/dataclass object instead of a plain dict
+        if hasattr(cfg, "instrument_id"):
+            instrument = str(cfg.instrument_id)
+        elif isinstance(cfg, dict):
+            instrument = cfg.get("instrument_id", "EUR/USD.SIM")
+        else:
+            instrument = "EUR/USD.SIM"
         result.append(
             {
                 "id": strategy["id"],
@@ -61,7 +68,7 @@ async def list_strategies():
                 "type": strategy["type"],
                 "status": strategy["status"],
                 "description": strategy.get("description", "SMA Crossover strategy"),
-                "instrument": cfg.get("instrument_id", "EUR/USD.SIM"),
+                "instrument": instrument,
                 "performance": {
                     "total_pnl": br.get("total_pnl", 0.0) if br else 0.0,
                     "total_trades": br.get("total_trades", 0) if br else 0,
