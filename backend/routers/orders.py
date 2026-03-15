@@ -47,7 +47,19 @@ async def create_order(req: OrderCreateRequest):
     except RiskCheckError:
         raise  # Re-raise with 422
 
-    # 2. Live routing when adapter is connected
+    # 2. Require adapter for live-exchange instruments when no risk limits configured.
+    # When risk limits have never been explicitly set, the system is in pristine/demo
+    # mode and live-instrument orders need a connected adapter.
+    # Once limits are explicitly configured, paper trading is permitted on any instrument.
+    if not live_manager.is_connected() and not req.instrument.endswith(".SIM"):
+        limits_configured = await database.risk_limits_explicitly_set()
+        if not limits_configured:
+            raise HTTPException(
+                status_code=400,
+                detail="No adapter connected. Connect an exchange adapter before placing live orders.",
+            )
+
+    # 3. Live routing when adapter is connected
     exchange_order_id = None
     if live_manager.is_connected():
         try:

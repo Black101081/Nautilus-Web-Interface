@@ -240,19 +240,33 @@ class NautilusTradingSystem:
             
             strategy_info = self.strategies[strategy_id]
             strategy_config = strategy_info["config"]
-            
+            strategy_type = strategy_info["type"]
+
+            # MACD has no real BacktestEngine implementation — return early
+            if strategy_type == "macd":
+                return {
+                    "success": False,
+                    "message": "MACD backtest is not yet supported in the engine",
+                }
+
+            # Resolve instrument_id safely for both config objects and plain dicts
+            if isinstance(strategy_config, dict):
+                cfg_instrument_id = strategy_config.get("instrument_id", "EUR/USD.SIM")
+            else:
+                cfg_instrument_id = strategy_config.instrument_id
+
             logger.info("Starting backtest for %s", strategy_id)
             logger.info("Period: %s to %s", start_date, end_date)
             logger.info("Starting balance: $%.2f", starting_balance)
-            
+
             # Create BacktestEngine with configuration
             engine_config = BacktestEngineConfig(
                 trader_id=self.trader_id,
                 logging=LoggingConfig(log_level="INFO"),
             )
-            
+
             engine = BacktestEngine(config=engine_config)
-            
+
             # Add venue (simulated exchange)
             VENUE = Venue("SIM")
             engine.add_venue(
@@ -262,18 +276,18 @@ class NautilusTradingSystem:
                 base_currency=USD,
                 starting_balances=[Money(starting_balance, USD)],
             )
-            
+
             # Get instrument from catalog
             instrument = None
             for instr in self.instruments:
-                if str(instr.id) == strategy_config.instrument_id:
+                if str(instr.id) == cfg_instrument_id:
                     instrument = instr
                     break
-            
+
             if not instrument:
                 return {
                     "success": False,
-                    "message": f"Instrument {strategy_config.instrument_id} not found in catalog"
+                    "message": f"Instrument {cfg_instrument_id} not found in catalog"
                 }
             
             # Add instrument
@@ -374,27 +388,30 @@ class NautilusTradingSystem:
             logger.info("Total Trades: %d", total_trades)
             logger.info("Win Rate: %.2f%%", win_rate)
             
-            # Clean up
-            engine.dispose()
-            
             return {
                 "success": True,
                 "message": "Backtest completed successfully",
                 "result": backtest_result
             }
-            
+
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
             logger.error("Backtest failed: %s", e)
             logger.debug(error_trace)
-            
+
             return {
                 "success": False,
                 "message": f"Backtest failed: {str(e)}",
                 "error": str(e),
                 "trace": error_trace
             }
+        finally:
+            # Always dispose engine to release resources, regardless of success/failure
+            try:
+                engine.dispose()
+            except Exception:
+                pass  # engine may not have been created if error was early
     
     def get_backtest_results(self, strategy_id: str) -> Optional[Dict[str, Any]]:
         """Get backtest results for a strategy."""

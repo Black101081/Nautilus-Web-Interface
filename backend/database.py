@@ -357,6 +357,16 @@ async def get_risk_limits() -> Dict[str, Any]:
     return json.loads(row[0]) if row else DEFAULT_RISK_LIMITS.copy()
 
 
+async def risk_limits_explicitly_set() -> bool:
+    """Return True if risk limits have been explicitly configured by the user (not just seeded defaults)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM kv_store WHERE namespace='risk' AND key='user_configured'"
+        ) as cur:
+            row = await cur.fetchone()
+    return row is not None
+
+
 async def update_risk_limits(updates: Dict[str, Any]) -> Dict[str, Any]:
     limits = await get_risk_limits()
     limits.update(updates)
@@ -364,6 +374,10 @@ async def update_risk_limits(updates: Dict[str, Any]) -> Dict[str, Any]:
         await db.execute(
             "INSERT OR REPLACE INTO kv_store (namespace, key, value) VALUES ('risk', 'limits', ?)",
             (json.dumps(limits),),
+        )
+        # Mark that limits have been explicitly configured by the user
+        await db.execute(
+            "INSERT OR REPLACE INTO kv_store (namespace, key, value) VALUES ('risk', 'user_configured', '1')",
         )
         await db.commit()
     return limits
@@ -676,7 +690,8 @@ async def get_daily_realized_loss() -> float:
     Return the total realized loss from filled orders today (UTC).
     Loss is a negative number; we return its absolute value is implied by callers.
     """
-    today = date.today().isoformat()
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).date().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             """SELECT COALESCE(SUM(pnl), 0) FROM orders
@@ -689,7 +704,8 @@ async def get_daily_realized_loss() -> float:
 
 async def count_orders_today() -> int:
     """Return the number of orders created today (UTC)."""
-    today = date.today().isoformat()
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).date().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT COUNT(*) FROM orders WHERE date(timestamp)=?",
