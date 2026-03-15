@@ -111,7 +111,7 @@ async def run_demo_backtest(request: DemoBacktestRequest):
             {
                 "type": "backtest_complete",
                 "strategy_id": "demo",
-                "total_pnl": result["result"].get("total_pnl", 0),
+                "total_pnl": result.get("result", {}).get("total_pnl", 0),
             }
         )
         return result

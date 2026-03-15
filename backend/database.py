@@ -175,8 +175,8 @@ async def init_db() -> None:
             try:
                 await db.execute(migration)
                 await db.commit()
-            except Exception:
-                pass  # Column already exists
+            except aiosqlite.OperationalError:
+                pass  # Column already exists — expected on re-initialization
 
         await _seed_defaults(db)
 
@@ -354,7 +354,12 @@ async def get_risk_limits() -> Dict[str, Any]:
             "SELECT value FROM kv_store WHERE namespace='risk' AND key='limits'"
         ) as cur:
             row = await cur.fetchone()
-    return json.loads(row[0]) if row else DEFAULT_RISK_LIMITS.copy()
+    if not row:
+        return DEFAULT_RISK_LIMITS.copy()
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        return DEFAULT_RISK_LIMITS.copy()
 
 
 async def risk_limits_explicitly_set() -> bool:
@@ -405,7 +410,8 @@ def _decrypt_sensitive_settings(notif: dict) -> dict:
     for field in _SENSITIVE_SETTINGS_FIELDS:
         if field in result and result[field]:
             decrypted = decrypt_credential(result[field])
-            result[field] = decrypted if decrypted else result[field]
+            # On failure return empty string — never expose raw encrypted bytes as credential
+            result[field] = decrypted if decrypted else ""
     return result
 
 
@@ -699,7 +705,7 @@ async def get_daily_realized_loss() -> float:
             (today,),
         ) as cur:
             row = await cur.fetchone()
-    return float(row[0]) if row else 0.0
+    return float(row[0]) if row and row[0] is not None else 0.0
 
 
 async def count_orders_today() -> int:
@@ -712,7 +718,7 @@ async def count_orders_today() -> int:
             (today,),
         ) as cur:
             row = await cur.fetchone()
-    return int(row[0]) if row else 0
+    return int(row[0]) if row and row[0] is not None else 0
 
 
 # ── Users ──────────────────────────────────────────────────────────────────────

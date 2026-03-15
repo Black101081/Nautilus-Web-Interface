@@ -257,8 +257,8 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
     sid = body.get("id") or f"STR-{uuid.uuid4().hex[:8].upper()}"
     description = body.get("description", _STRATEGY_TYPES[strategy_type]["description"])
 
-    # Build config from request body, falling back to defaults
-    config = {k: body.get(k, defaults[k]) for k in defaults}
+    # Build config from request body, falling back to defaults for missing/null values
+    config = {k: (body.get(k) if body.get(k) is not None else defaults[k]) for k in defaults}
 
     now = datetime.now(timezone.utc).isoformat()
     strategy_row = {

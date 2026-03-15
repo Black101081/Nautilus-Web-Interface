@@ -39,13 +39,21 @@ class EmailNotifier:
         msg["To"] = to
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "html"))
+        msg_str = msg.as_string()
 
-        context = ssl.create_default_context()
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-            server.starttls(context=context)
-            if smtp_user and smtp_password:
-                server.login(smtp_user, smtp_password)
-            server.sendmail(from_addr, to, msg.as_string())
+        # Run blocking SMTP I/O in a thread pool to avoid blocking the event loop
+        import asyncio
+
+        def _send_blocking() -> None:
+            context = ssl.create_default_context()
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                server.starttls(context=context)
+                if smtp_user and smtp_password:
+                    server.login(smtp_user, smtp_password)
+                server.sendmail(from_addr, to, msg_str)
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _send_blocking)
 
 
 class TelegramNotifier:
