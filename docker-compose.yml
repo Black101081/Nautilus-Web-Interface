@@ -31,10 +31,12 @@ services:
       args:
         VITE_NAUTILUS_API_URL: "http://localhost:8000"
         VITE_WS_URL: "ws://localhost:8000"
+        VITE_ADMIN_DB_API_URL: "http://localhost:8001"
     ports:
       - "3000:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

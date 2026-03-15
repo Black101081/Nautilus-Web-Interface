@@ -8,6 +8,12 @@ RUN npm ci
 
 # Copy source and build
 COPY . .
+
+# Declare build-time variables so Vite can embed them into the JS bundle
+ARG VITE_NAUTILUS_API_URL=http://localhost:8000
+ARG VITE_WS_URL=ws://localhost:8000
+ARG VITE_ADMIN_DB_API_URL=http://localhost:8001
+
 RUN npm run build
 
 # ── Production image ─────────────────────────────────────────────────────────
