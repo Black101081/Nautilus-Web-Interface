@@ -445,9 +445,7 @@ def test_alert_trigger_marks_status(client):
     alert_id = r.json()["alert"]["id"]
 
     # Trigger via the new DB function
-    triggered = asyncio.get_event_loop().run_until_complete(
-        database.trigger_alert(alert_id)
-    )
+    triggered = asyncio.run(database.trigger_alert(alert_id))
     assert triggered is True
 
     # Verify status via list endpoint
@@ -468,8 +466,8 @@ def test_trigger_already_triggered_alert(client):
     )
     alert_id = r.json()["alert"]["id"]
 
-    asyncio.get_event_loop().run_until_complete(database.trigger_alert(alert_id))
-    second = asyncio.get_event_loop().run_until_complete(database.trigger_alert(alert_id))
+    asyncio.run(database.trigger_alert(alert_id))
+    second = asyncio.run(database.trigger_alert(alert_id))
     assert second is False  # already triggered, rowcount == 0
 
 
@@ -507,3 +505,136 @@ def test_auth_enabled_passes_with_key(authed_client):
     """With API_KEY set and correct header, requests should pass through."""
     r = authed_client.get("/api/strategies", headers={"X-API-Key": "test-secret"})
     assert r.status_code == 200
+
+
+# ── Alert dismiss ─────────────────────────────────────────────────────────────
+
+def test_alert_dismiss(client):
+    """Dismiss an active alert — status becomes 'dismissed', not deleted."""
+    r = client.post(
+        "/api/alerts",
+        json={"symbol": "SOLUSDT", "condition": "above", "price": 500.0},
+    )
+    alert_id = r.json()["alert"]["id"]
+
+    r = client.put(f"/api/alerts/{alert_id}/dismiss")
+    assert r.status_code == 200
+    assert r.json()["status"] == "dismissed"
+
+    # Still present in the list
+    r = client.get("/api/alerts")
+    found = [a for a in r.json()["alerts"] if a["id"] == alert_id]
+    assert found, "Dismissed alert should remain in the list"
+    assert found[0]["status"] == "dismissed"
+
+
+def test_alert_dismiss_nonexistent(client):
+    """Dismissing an unknown ID must return 404."""
+    r = client.put("/api/alerts/ALT-DOESNOTEXIST/dismiss")
+    assert r.status_code == 404
+
+
+def test_alert_dismiss_already_triggered(client):
+    """Dismissing an already-triggered alert must return 404 (not active)."""
+    import asyncio
+    import database
+
+    r = client.post(
+        "/api/alerts",
+        json={"symbol": "BNBUSDT", "condition": "below", "price": 1.0},
+    )
+    alert_id = r.json()["alert"]["id"]
+
+    asyncio.run(database.trigger_alert(alert_id))  # mark as triggered
+
+    r = client.put(f"/api/alerts/{alert_id}/dismiss")
+    assert r.status_code == 404  # only active alerts can be dismissed
+
+
+# ── Orders — validation edge cases ───────────────────────────────────────────
+
+def test_create_order_zero_quantity(client):
+    """quantity=0 must be rejected with 422."""
+    r = client.post(
+        "/api/orders",
+        json={"instrument": "EUR/USD.SIM", "side": "BUY", "quantity": 0},
+    )
+    assert r.status_code == 422
+
+
+def test_create_order_negative_quantity(client):
+    """Negative quantity must be rejected with 422."""
+    r = client.post(
+        "/api/orders",
+        json={"instrument": "EUR/USD.SIM", "side": "BUY", "quantity": -100},
+    )
+    assert r.status_code == 422
+
+
+# ── Positions ─────────────────────────────────────────────────────────────────
+
+def test_positions_list(client):
+    """GET /api/positions returns a list (may be empty)."""
+    r = client.get("/api/positions")
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+
+def test_close_nonexistent_position(client):
+    """Closing an unknown position ID still returns 200 (graceful no-op)."""
+    r = client.post("/api/positions/POS-DOESNOTEXIST/close")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    assert body["closed_in_db"] is False
+
+
+# ── Risk — validation ─────────────────────────────────────────────────────────
+
+def test_update_risk_limits_partial(client):
+    """Partial update should only change the specified field."""
+    r = client.post("/api/risk/limits", json={"max_position_size": 250_000})
+    assert r.status_code == 200
+    limits = r.json()["limits"]
+    assert limits["max_position_size"] == 250_000
+    # Other fields remain at their defaults
+    assert "max_daily_loss" in limits
+
+
+# ── Strategy — SMA validation ─────────────────────────────────────────────────
+
+def test_create_sma_strategy_invalid_periods(client):
+    """fast_period >= slow_period must return 422."""
+    r = client.post(
+        "/api/strategies",
+        json={"name": "Bad SMA", "type": "sma_crossover", "fast_period": 20, "slow_period": 10},
+    )
+    assert r.status_code == 422
+
+
+def test_create_strategy_missing_name(client):
+    """A strategy without a name must return 422."""
+    r = client.post("/api/strategies", json={"type": "sma_crossover"})
+    assert r.status_code == 422
+
+
+# ── Backtest — concurrent lock ────────────────────────────────────────────────
+
+def test_backtest_lock_prevents_concurrent_run(client):
+    """
+    Simulate the lock being held: import the module, set the flag, then
+    verify that a second request gets 409.
+    """
+    import routers.backtest as bt_module
+
+    original = bt_module._backtest_lock
+    bt_module._backtest_lock = True
+    try:
+        r = client.post(
+            "/api/nautilus/demo-backtest",
+            json={"fast_period": 10, "slow_period": 20, "num_bars": 100, "starting_balance": 10000},
+        )
+        assert r.status_code == 409
+        assert "already running" in r.json()["detail"].lower()
+    finally:
+        bt_module._backtest_lock = original  # always restore

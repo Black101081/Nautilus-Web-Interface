@@ -76,6 +76,15 @@ export default function AlertsPage() {
     }
   };
 
+  const handleDismiss = async (id: string) => {
+    try {
+      await api.put(`/api/alerts/${id}/dismiss`, {});
+      fetchAlerts();
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : 'Failed to dismiss alert');
+    }
+  };
+
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this alert?')) return;
     try {
@@ -188,6 +197,15 @@ export default function AlertsPage() {
                   <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusBadge(alert.status)}`}>
                     {alert.status}
                   </span>
+                  {alert.status === 'active' && (
+                    <button
+                      onClick={() => handleDismiss(alert.id)}
+                      className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all"
+                      title="Dismiss alert"
+                    >
+                      ✕
+                    </button>
+                  )}
                   <button
                     onClick={() => handleDelete(alert.id)}
                     className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"

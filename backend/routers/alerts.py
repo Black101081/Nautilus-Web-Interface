@@ -32,6 +32,18 @@ async def create_alert(req: AlertCreateRequest):
     return {"success": True, "alert": alert}
 
 
+@router.put("/{alert_id}/dismiss")
+async def dismiss_alert(alert_id: str):
+    """Dismiss an active alert without deleting it."""
+    updated = await database.dismiss_alert(alert_id)
+    if not updated:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Alert {alert_id} not found or not in 'active' state",
+        )
+    return {"success": True, "status": "dismissed"}
+
+
 @router.delete("/{alert_id}")
 async def delete_alert(alert_id: str):
     deleted = await database.delete_alert(alert_id)

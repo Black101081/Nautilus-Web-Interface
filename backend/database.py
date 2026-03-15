@@ -272,6 +272,17 @@ async def trigger_alert(alert_id: str) -> bool:
         return cur.rowcount > 0
 
 
+async def dismiss_alert(alert_id: str) -> bool:
+    """Mark alert as dismissed (active → dismissed only). Returns True if updated."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE alerts SET status='dismissed' WHERE id=? AND status='active'",
+            (alert_id,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
 async def delete_alert(alert_id: str) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("DELETE FROM alerts WHERE id=?", (alert_id,))

@@ -98,7 +98,9 @@ export default function BacktestingPage() {
         setStrategies(strats);
         if (strats.length > 0) setSelectedStrategy(strats[0].id);
       })
-      .catch(() => {});
+      .catch(err => {
+        setError(err instanceof Error ? err.message : 'Failed to load strategies');
+      });
   }, []);
 
   const runBacktest = async () => {

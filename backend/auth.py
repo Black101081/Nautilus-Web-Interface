@@ -5,6 +5,7 @@ If API_KEY is not set, authentication is disabled (development mode).
 """
 
 import os
+import secrets
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -38,7 +39,7 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         key = request.headers.get("X-API-Key", "")
-        if key != API_KEY:
+        if not secrets.compare_digest(key, API_KEY):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or missing API key"},
