@@ -1,6 +1,16 @@
 """
-Nautilus Trader API
-FastAPI backend for Nautilus Trader Web Interface with real Nautilus integration
+Nautilus Trader API — SECONDARY / REFERENCE IMPLEMENTATION
+===========================================================
+The canonical production entry point is nautilus_fastapi.py which includes
+all endpoints required by the frontend (system metrics, settings, database
+operations, component controls, etc.).
+
+This file is kept as a reference/alternative implementation. Do NOT use it
+as the primary server entrypoint — some frontend pages will 404 because
+endpoints like /api/system/metrics, /api/settings, and /api/database/* are
+only defined in nautilus_fastapi.py.
+
+Production: python nautilus_fastapi.py (or uvicorn nautilus_fastapi:app)
 """
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query

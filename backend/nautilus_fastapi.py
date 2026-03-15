@@ -23,6 +23,7 @@ import os
 os.environ['NAUTILUS_CATALOG_PATH'] = str(backend_dir.parent / 'nautilus_data' / 'catalog')
 
 from nautilus_core import NautilusTradingSystem
+from auth import ApiKeyMiddleware
 
 # Initialize with correct catalog path
 nautilus_system = NautilusTradingSystem(
@@ -35,14 +36,23 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS middleware
+# CORS — default to localhost dev origins; set CORS_ORIGINS env var in production
+_cors_env = os.getenv("CORS_ORIGINS", "")
+CORS_ORIGINS = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    or ["http://localhost:5173", "http://localhost:3000"]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# API key authentication (enabled when API_KEY env var is set)
+app.add_middleware(ApiKeyMiddleware)
 
 
 # Request/Response models

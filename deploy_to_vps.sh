@@ -62,7 +62,7 @@ cp -r ~/Nautilus-Web-Interface/* .
 echo "[6/10] Setting up Python environment..."
 python3.11 -m venv venv
 source venv/bin/activate
-pip install fastapi uvicorn pydantic python-dotenv
+pip install -r backend/requirements.txt
 
 # Step 7: Create environment file
 echo "[7/10] Creating environment configuration..."
@@ -96,7 +96,7 @@ User=$USER
 WorkingDirectory=/opt/nautilus-web
 Environment="PATH=/opt/nautilus-web/venv/bin"
 EnvironmentFile=/opt/nautilus-web/.env
-ExecStart=/opt/nautilus-web/venv/bin/python3 nautilus_trader_api.py
+ExecStart=/opt/nautilus-web/venv/bin/python3 backend/nautilus_fastapi.py
 Restart=always
 RestartSec=10
 
