@@ -192,12 +192,26 @@ async def connect_adapter(adapter_id: str, req: AdapterConnectRequest):
             detail=f"Missing required credentials: {', '.join(missing)}",
         )
 
-    api_key = (req.api_key or "").replace("\x00", "")
-    api_secret = (req.api_secret or "").replace("\x00", "")
+    import re as _re
+    api_key = (req.api_key or "").strip().replace("\x00", "")
+    api_secret = (req.api_secret or "").strip().replace("\x00", "")
 
     # Reject oversized credentials
     if len(api_key) > 512 or len(api_secret) > 512:
         raise HTTPException(status_code=400, detail="Credential too long (max 512 chars)")
+
+    # Minimum-length guard (real exchange keys are always >= 8 chars)
+    if api_key and len(api_key) < 8:
+        raise HTTPException(status_code=400, detail="api_key too short (min 8 chars)")
+    if api_secret and len(api_secret) < 8:
+        raise HTTPException(status_code=400, detail="api_secret too short (min 8 chars)")
+
+    # Allow only printable ASCII (no control characters beyond what was already stripped)
+    _safe_re = _re.compile(r'^[\x20-\x7E]+$')
+    if api_key and not _safe_re.match(api_key):
+        raise HTTPException(status_code=400, detail="api_key contains invalid characters")
+    if api_secret and not _safe_re.match(api_secret):
+        raise HTTPException(status_code=400, detail="api_secret contains invalid characters")
 
     # Encrypt credentials before storing
     from credential_utils import encrypt_credential

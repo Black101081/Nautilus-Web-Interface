@@ -70,7 +70,7 @@ class TestLiveTradingNodeLifecycle:
             m.return_value = {"success": True}
             client.post(
                 "/api/adapters/binance/connect",
-                json={"api_key": "k", "api_secret": "s"},
+                json={"api_key": "testkey12345", "api_secret": "testsecret12345"},
             )
 
         r = client.get("/api/engine/info")
@@ -142,7 +142,7 @@ class TestAdapterInterface:
             m.return_value = {"success": True, "connection_id": "CONN-XYZ-001"}
             client.post(
                 "/api/adapters/binance/connect",
-                json={"api_key": "k", "api_secret": "s"},
+                json={"api_key": "testkey12345", "api_secret": "testsecret12345"},
             )
 
         r = client.get("/api/adapters/binance")
@@ -157,7 +157,7 @@ class TestAdapterInterface:
             m.side_effect = ConnectionError("WebSocket handshake failed")
             r = client.post(
                 "/api/adapters/binance/connect",
-                json={"api_key": "k", "api_secret": "s"},
+                json={"api_key": "testkey12345", "api_secret": "testsecret12345"},
             )
 
         # Status must NOT be "connected"

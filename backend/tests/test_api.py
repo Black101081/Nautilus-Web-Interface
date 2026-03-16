@@ -412,7 +412,7 @@ def test_adapter_disconnect(client):
     # Connect first
     client.post(
         "/api/adapters/bybit/connect",
-        json={"api_key": "k", "api_secret": "s"},
+        json={"api_key": "testkey12345", "api_secret": "testsecret12345"},
     )
     r = client.post("/api/adapters/bybit/disconnect")
     assert r.status_code == 200
@@ -425,7 +425,7 @@ def test_adapter_status_persists_after_connect(client):
     """After connect, GET /adapters should show status='connected'."""
     client.post(
         "/api/adapters/okx/connect",
-        json={"api_key": "mykey", "api_secret": "mysecret"},
+        json={"api_key": "testkey12345", "api_secret": "testsecret12345"},
     )
     r = client.get("/api/adapters/okx")
     assert r.json()["status"] == "connected"

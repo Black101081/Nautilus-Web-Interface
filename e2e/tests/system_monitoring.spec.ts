@@ -148,9 +148,10 @@ test.describe("Market Data", () => {
     const r = await request.get(`${API}/api/market-data/instruments`);
     expect(r.status()).toBe(200);
     const body = await r.json();
-    expect(Array.isArray(body)).toBe(true);
-    expect(body.length).toBeGreaterThan(0);
-    const btc = body.find((i: { symbol: string }) => i.symbol === "BTCUSDT");
+    // API returns { instruments: [...], count: N }
+    expect(Array.isArray(body.instruments)).toBe(true);
+    expect(body.instruments.length).toBeGreaterThan(0);
+    const btc = body.instruments.find((i: { symbol: string }) => i.symbol === "BTCUSDT");
     expect(btc).toBeTruthy();
     expect(btc.price).toBeGreaterThan(0);
   });
