@@ -13,7 +13,10 @@ Current state:
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -66,26 +69,90 @@ class LiveTradingManager:
 
     # ── Adapter connections ───────────────────────────────────────────────────
 
+    @staticmethod
+    async def _verify_binance_credentials(api_key: str, api_secret: str) -> Dict[str, Any]:
+        """
+        Verify Binance credentials by calling GET /api/v3/account.
+
+        Returns {"valid": True, "can_trade": bool} on success.
+        Raises ConnectionError with a descriptive message on failure.
+        Network errors are reported separately so the caller can decide
+        whether to mark as "connected_offline".
+        """
+        import httpx
+
+        timestamp = int(time.time() * 1000)
+        query = f"timestamp={timestamp}"
+        signature = hmac.new(
+            api_secret.encode(), query.encode(), hashlib.sha256
+        ).hexdigest()
+        url = f"https://api.binance.com/api/v3/account?{query}&signature={signature}"
+        headers = {"X-MBX-APIKEY": api_key}
+
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(url, headers=headers)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "valid": True,
+                    "can_trade": data.get("canTrade", False),
+                    "can_withdraw": data.get("canWithdraw", False),
+                    "account_type": data.get("accountType", "SPOT"),
+                }
+            if resp.status_code in (401, 403):
+                raise ConnectionError(
+                    f"Binance rejected credentials (HTTP {resp.status_code}): "
+                    "check your API key and secret"
+                )
+            raise ConnectionError(
+                f"Binance returned unexpected status {resp.status_code}"
+            )
+        except httpx.TimeoutException:
+            raise ConnectionError("Binance API timed out — check your network")
+        except httpx.ConnectError:
+            raise ConnectionError("Could not reach Binance API — check your network")
+
     async def connect_binance(self, api_key: str, api_secret: str) -> Dict[str, Any]:
         """
         Connect Binance Spot adapter.
 
-        Sprint 2: Uses mock implementation.
-        Real integration with nautilus_trader.adapters.binance is TODO.
-        Raises ConnectionError if credentials are clearly invalid.
+        Validates credentials via Binance REST API before marking as connected.
+        If the network is unreachable the connection is still recorded
+        (offline/degraded mode) so the UI stays functional.
         """
         async with self._lock:
             if not api_key or not api_secret:
                 raise ConnectionError("api_key and api_secret are required")
 
+            # Attempt real credential verification
+            verified = False
+            account_info: Dict[str, Any] = {}
+            try:
+                account_info = await self._verify_binance_credentials(api_key, api_secret)
+                verified = True
+            except Exception as exc:
+                err_msg = str(exc)
+                # Hard rejection from Binance (invalid key) — propagate immediately
+                if "rejected credentials" in err_msg:
+                    raise ConnectionError(err_msg)
+                # Network/timeout/other issue — fall through to "connected_offline" state
+
             connection_id = f"CONN-BINANCE-{uuid.uuid4().hex[:8].upper()}"
+            status = "connected" if verified else "connected_offline"
             self._connections["binance"] = AdapterConnection(
                 adapter_id="binance",
                 connection_id=connection_id,
-                status="connected",
+                status=status,
             )
             self._is_active = True
-            return {"success": True, "connection_id": connection_id}
+            return {
+                "success": True,
+                "connection_id": connection_id,
+                "verified": verified,
+                "account_info": account_info,
+            }
 
     async def connect_bybit(self, api_key: str, api_secret: str) -> Dict[str, Any]:
         """Connect Bybit adapter (Sprint 4 TODO)."""

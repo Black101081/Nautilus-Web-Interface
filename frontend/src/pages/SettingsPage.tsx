@@ -4,6 +4,163 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useNotification } from "@/contexts/NotificationContext";
 import api from "@/lib/api";
 
+// ── 2FA Management component ─────────────────────────────────────────────────
+
+function TwoFactorCard() {
+  const { success, error: notifyError } = useNotification();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [setupData, setSetupData] = useState<{ secret: string; otpauth_uri: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<"idle" | "enabling" | "disabling">("idle");
+
+  useEffect(() => {
+    api.get<{ two_factor_enabled: boolean }>("/api/auth/2fa/status")
+      .then(d => setEnabled(d.two_factor_enabled))
+      .catch(() => setEnabled(false));
+  }, []);
+
+  const startSetup = async () => {
+    setBusy(true);
+    try {
+      const d = await api.get<{ secret: string; otpauth_uri: string }>("/api/auth/2fa/setup");
+      setSetupData(d);
+      setMode("enabling");
+      setCode("");
+    } catch { notifyError("Failed to generate 2FA secret"); }
+    finally { setBusy(false); }
+  };
+
+  const confirmEnable = async () => {
+    if (code.length < 6) return;
+    setBusy(true);
+    try {
+      await api.post("/api/auth/2fa/enable", { totp_code: code });
+      setEnabled(true);
+      setMode("idle");
+      setSetupData(null);
+      setCode("");
+      success("2FA activated — your account is now protected");
+    } catch { notifyError("Invalid code — check your authenticator app"); }
+    finally { setBusy(false); }
+  };
+
+  const startDisable = () => { setMode("disabling"); setCode(""); };
+
+  const confirmDisable = async () => {
+    if (code.length < 6) return;
+    setBusy(true);
+    try {
+      await api.post("/api/auth/2fa/disable", { totp_code: code });
+      setEnabled(false);
+      setMode("idle");
+      setCode("");
+      success("2FA deactivated");
+    } catch { notifyError("Invalid code"); }
+    finally { setBusy(false); }
+  };
+
+  const cancel = () => { setMode("idle"); setSetupData(null); setCode(""); };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Two-Factor Authentication</CardTitle>
+        <CardDescription>TOTP-based 2FA (Google Authenticator, Authy, etc.)</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Status badge */}
+        <div className="flex items-center gap-3">
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold ${
+            enabled ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${enabled ? "bg-green-500" : "bg-gray-400"}`} />
+            {enabled === null ? "Checking…" : enabled ? "Enabled" : "Disabled"}
+          </span>
+        </div>
+
+        {/* Idle — show action buttons */}
+        {mode === "idle" && enabled !== null && (
+          enabled
+            ? <Button variant="outline" onClick={startDisable} className="text-red-600 border-red-200 hover:bg-red-50">
+                Disable 2FA
+              </Button>
+            : <Button onClick={startSetup} disabled={busy}>
+                {busy ? "Generating…" : "Set Up 2FA"}
+              </Button>
+        )}
+
+        {/* Setup: show secret + QR + confirm step */}
+        {mode === "enabling" && setupData && (
+          <div className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <p className="text-sm font-semibold text-amber-800 mb-2">Step 1 — Add to your authenticator app</p>
+              <p className="text-xs text-amber-700 mb-3">
+                Scan the QR code or manually enter this secret key:
+              </p>
+              <div className="font-mono text-sm bg-white border rounded px-3 py-2 break-all select-all mb-3">
+                {setupData.secret}
+              </div>
+              {/* QR code via Google Charts API — data URI approach */}
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(setupData.otpauth_uri)}`}
+                alt="TOTP QR code"
+                className="rounded border"
+                width={160}
+                height={160}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            </div>
+            <div>
+              <p className="text-sm font-semibold mb-2">Step 2 — Enter the 6-digit code to confirm</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={code}
+                  onChange={e => setCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="000000"
+                  className="w-32 px-3 py-2 border rounded-md font-mono text-lg tracking-widest text-center"
+                  autoFocus
+                />
+                <Button onClick={confirmEnable} disabled={busy || code.length < 6}>
+                  {busy ? "Verifying…" : "Activate 2FA"}
+                </Button>
+                <Button variant="outline" onClick={cancel}>Cancel</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Disable: confirm with current TOTP code */}
+        {mode === "disabling" && (
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600">Enter your current 2FA code to disable:</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={code}
+                onChange={e => setCode(e.target.value.replace(/\D/g, ""))}
+                placeholder="000000"
+                className="w-32 px-3 py-2 border rounded-md font-mono text-lg tracking-widest text-center"
+                autoFocus
+              />
+              <Button variant="outline" onClick={confirmDisable} disabled={busy || code.length < 6}
+                className="text-red-600 border-red-200 hover:bg-red-50">
+                {busy ? "Verifying…" : "Disable 2FA"}
+              </Button>
+              <Button variant="outline" onClick={cancel}>Cancel</Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 interface Settings {
   system_name: string;
   environment: string;
@@ -155,18 +312,15 @@ export default function SettingsPage() {
                   value={settings.session_timeout}
                   onChange={e => set("session_timeout", parseInt(e.target.value) || 30)}
                 />
-              </div>
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">Two-Factor Auth</label>
-                <input
-                  type="checkbox"
-                  className="w-4 h-4"
-                  checked={settings.two_factor_auth}
-                  onChange={e => set("two_factor_auth", e.target.checked)}
-                />
+                <p className="text-xs text-gray-400">
+                  Token expiry in minutes. 0 = use JWT_EXPIRE_HOURS env var (default 8h).
+                </p>
               </div>
             </CardContent>
           </Card>
+
+          {/* 2FA Card */}
+          <TwoFactorCard />
 
           {/* Performance Settings */}
           <Card>

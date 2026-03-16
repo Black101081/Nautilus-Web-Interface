@@ -23,3 +23,15 @@ def reset_rate_limit_counters():
     except (ImportError, AttributeError):
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def reset_live_manager():
+    """Reset LiveTradingManager singleton state between tests to prevent leakage."""
+    try:
+        from state import live_manager
+        live_manager._connections.clear()
+        live_manager._is_active = False
+    except (ImportError, AttributeError):
+        pass
+    yield

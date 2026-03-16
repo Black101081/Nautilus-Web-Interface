@@ -141,7 +141,9 @@ async def init_db() -> None:
                 hashed_password TEXT NOT NULL,
                 role            TEXT NOT NULL DEFAULT 'trader',
                 is_active       INTEGER NOT NULL DEFAULT 1,
-                created_at      TEXT NOT NULL
+                created_at      TEXT NOT NULL,
+                totp_secret     TEXT,
+                two_factor_enabled INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS audit_logs (
@@ -171,6 +173,8 @@ async def init_db() -> None:
             "ALTER TABLE orders ADD COLUMN pnl REAL DEFAULT 0",
             "ALTER TABLE orders ADD COLUMN strategy_id TEXT",
             "ALTER TABLE orders ADD COLUMN exchange_order_id TEXT",
+            "ALTER TABLE users ADD COLUMN totp_secret TEXT",
+            "ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0",
         ]:
             try:
                 await db.execute(migration)
@@ -797,6 +801,50 @@ async def seed_admin_user(admin_password: str) -> None:
             await create_user("admin", hashed, role="admin")
         except ValueError:
             pass  # Race condition: another process inserted admin first
+
+
+async def get_user_2fa(username: str) -> Optional[Dict[str, Any]]:
+    """Return totp_secret + two_factor_enabled for a user (active only)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, username, totp_secret, two_factor_enabled FROM users WHERE username=? AND is_active=1",
+            (username,),
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def set_totp_secret(username: str, secret: str) -> None:
+    """Store a new (unconfirmed) TOTP secret for a user."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET totp_secret=? WHERE username=? AND is_active=1",
+            (secret, username),
+        )
+        await db.commit()
+
+
+async def enable_2fa(username: str) -> bool:
+    """Activate 2FA for a user (secret must already be set). Returns True if found."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE users SET two_factor_enabled=1 WHERE username=? AND is_active=1 AND totp_secret IS NOT NULL",
+            (username,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def disable_2fa(username: str) -> bool:
+    """Deactivate 2FA and clear secret. Returns True if found."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE users SET two_factor_enabled=0, totp_secret=NULL WHERE username=? AND is_active=1",
+            (username,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 # ── Audit log ──────────────────────────────────────────────────────────────────
