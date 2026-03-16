@@ -14,14 +14,12 @@ from datetime import timedelta
 
 import pyotp
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 import database
-from auth_jwt import authenticate_user, create_access_token, decode_token
+from auth_jwt import authenticate_user, create_access_token, get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-_security = HTTPBearer(auto_error=False)
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -34,18 +32,6 @@ class LoginRequest(BaseModel):
 
 class TotpVerifyRequest(BaseModel):
     totp_code: str = Field(..., min_length=6, max_length=8)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _current_user(credentials: HTTPAuthorizationCredentials = Depends(_security)) -> dict:
-    """Dependency: verify JWT and return payload."""
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Missing token")
-    payload = decode_token(credentials.credentials)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return payload
 
 
 def _verify_totp(secret: str, code: str) -> bool:
@@ -93,17 +79,8 @@ async def login(body: LoginRequest):
 
 
 @router.post("/refresh")
-async def refresh_token(
-    credentials: HTTPAuthorizationCredentials = Depends(_security),
-):
+async def refresh_token(payload: dict = Depends(get_current_user)):
     """Issue a new token (extending expiry) given a valid existing Bearer token."""
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Missing token")
-
-    payload = decode_token(credentials.credentials)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
     new_token = create_access_token(
         {"sub": payload["sub"], "role": payload.get("role", "trader")}
     )
@@ -113,7 +90,7 @@ async def refresh_token(
 # ── 2FA endpoints (require authenticated user) ────────────────────────────────
 
 @router.get("/2fa/status")
-async def get_2fa_status(payload: dict = Depends(_current_user)):
+async def get_2fa_status(payload: dict = Depends(get_current_user)):
     """Return whether 2FA is currently enabled for the caller."""
     username = payload["sub"]
     twofa = await database.get_user_2fa(username)
@@ -122,7 +99,7 @@ async def get_2fa_status(payload: dict = Depends(_current_user)):
 
 
 @router.get("/2fa/setup")
-async def setup_2fa(payload: dict = Depends(_current_user)):
+async def setup_2fa(payload: dict = Depends(get_current_user)):
     """
     Generate a new TOTP secret for the caller and store it (unactivated).
 
@@ -150,7 +127,7 @@ async def setup_2fa(payload: dict = Depends(_current_user)):
 
 
 @router.post("/2fa/enable")
-async def enable_2fa(body: TotpVerifyRequest, payload: dict = Depends(_current_user)):
+async def enable_2fa(body: TotpVerifyRequest, payload: dict = Depends(get_current_user)):
     """
     Activate 2FA for the caller after verifying the TOTP code.
 
@@ -177,7 +154,7 @@ async def enable_2fa(body: TotpVerifyRequest, payload: dict = Depends(_current_u
 
 
 @router.post("/2fa/disable")
-async def disable_2fa(body: TotpVerifyRequest, payload: dict = Depends(_current_user)):
+async def disable_2fa(body: TotpVerifyRequest, payload: dict = Depends(get_current_user)):
     """
     Deactivate 2FA for the caller after verifying one last TOTP code.
 

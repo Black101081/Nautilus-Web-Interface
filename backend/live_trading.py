@@ -22,6 +22,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 
+class BinanceAuthError(ConnectionError):
+    """Raised when Binance explicitly rejects credentials (HTTP 401/403)."""
+
+
 @dataclass
 class AdapterConnection:
     adapter_id: str
@@ -102,7 +106,7 @@ class LiveTradingManager:
                     "account_type": data.get("accountType", "SPOT"),
                 }
             if resp.status_code in (401, 403):
-                raise ConnectionError(
+                raise BinanceAuthError(
                     f"Binance rejected credentials (HTTP {resp.status_code}): "
                     "check your API key and secret"
                 )
@@ -132,12 +136,12 @@ class LiveTradingManager:
             try:
                 account_info = await self._verify_binance_credentials(api_key, api_secret)
                 verified = True
-            except Exception as exc:
-                err_msg = str(exc)
+            except BinanceAuthError:
                 # Hard rejection from Binance (invalid key) — propagate immediately
-                if "rejected credentials" in err_msg:
-                    raise ConnectionError(err_msg)
+                raise
+            except Exception:
                 # Network/timeout/other issue — fall through to "connected_offline" state
+                pass
 
             connection_id = f"CONN-BINANCE-{uuid.uuid4().hex[:8].upper()}"
             status = "connected" if verified else "connected_offline"

@@ -59,3 +59,28 @@ def decode_token(token: str) -> Optional[dict]:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
+
+
+# ── FastAPI dependency helpers ────────────────────────────────────────────────
+
+from fastapi import Depends, HTTPException  # noqa: E402
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # noqa: E402
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
+    """Dependency: verify JWT and return payload. Raises 401 on failure."""
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Missing token")
+    payload = decode_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return payload
+
+
+def require_admin(payload: dict = Depends(get_current_user)) -> dict:
+    """Dependency: verify JWT and require admin role. Raises 403 if not admin."""
+    if payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+    return payload

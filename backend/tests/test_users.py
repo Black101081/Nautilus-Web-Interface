@@ -18,23 +18,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    """Authenticated admin test client with isolated DB."""
-    import database
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
-
-    from fastapi.testclient import TestClient
-    from nautilus_fastapi import app
-
-    with TestClient(app) as c:
-        login_r = c.post("/api/auth/login", json={"username": "admin", "password": "admin"})
-        assert login_r.status_code == 200, f"Admin login failed: {login_r.text}"
-        token = login_r.json()["access_token"]
-        c.headers.update({"Authorization": f"Bearer {token}"})
-        yield c
-
-
 # ── List users ───────────────────────────────────────────────────────────────
 
 def test_list_users_contains_admin(client):

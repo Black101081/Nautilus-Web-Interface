@@ -26,25 +26,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    """Authenticated test client with isolated DB."""
-    import database
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
-
-    from fastapi.testclient import TestClient
-    from nautilus_fastapi import app
-
-    with TestClient(app) as c:
-        r = c.post("/api/auth/login", json={"username": "admin", "password": "admin"})
-        assert r.status_code == 200, f"Login failed: {r.text}"
-        token = r.json()["access_token"]
-        c.headers.update({"Authorization": f"Bearer {token}"})
-        yield c
-
-
 # ── 2FA status ────────────────────────────────────────────────────────────────
 
 def test_2fa_status_initially_disabled(client):
@@ -213,10 +194,11 @@ class TestBinanceCredentialValidation:
 
     def test_connect_rejected_for_invalid_credentials(self, client):
         """Binance 401 → 502 propagated to client."""
+        from live_trading import BinanceAuthError
         with patch(
             "live_trading.LiveTradingManager._verify_binance_credentials",
             new_callable=AsyncMock,
-            side_effect=ConnectionError("Binance rejected credentials (HTTP 401): check your API key and secret"),
+            side_effect=BinanceAuthError("Binance rejected credentials (HTTP 401): check your API key and secret"),
         ):
             r = client.post(
                 "/api/adapters/binance/connect",

@@ -9,26 +9,12 @@ Endpoints (admin-only):
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 import database
-from auth_jwt import decode_token, hash_password
+from auth_jwt import hash_password, require_admin
 
 router = APIRouter(prefix="/api/users", tags=["users"])
-_security = HTTPBearer(auto_error=False)
-
-
-def _require_admin(credentials: HTTPAuthorizationCredentials = Depends(_security)) -> dict:
-    """Dependency: verify JWT and require admin role."""
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Missing token")
-    payload = decode_token(credentials.credentials)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    if payload.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin role required")
-    return payload
 
 
 class CreateUserRequest(BaseModel):
@@ -42,14 +28,14 @@ class ChangePasswordRequest(BaseModel):
 
 
 @router.get("")
-async def list_users(_admin=Depends(_require_admin)):
+async def list_users(_admin=Depends(require_admin)):
     """Return all users (passwords excluded)."""
     users = await database.list_users()
     return {"users": users, "count": len(users)}
 
 
 @router.post("", status_code=201)
-async def create_user(body: CreateUserRequest, _admin=Depends(_require_admin)):
+async def create_user(body: CreateUserRequest, _admin=Depends(require_admin)):
     """Create a new user account."""
     hashed = hash_password(body.password)
     try:
@@ -60,7 +46,7 @@ async def create_user(body: CreateUserRequest, _admin=Depends(_require_admin)):
 
 
 @router.delete("/{user_id}")
-async def delete_user(user_id: str, _admin=Depends(_require_admin)):
+async def delete_user(user_id: str, _admin=Depends(require_admin)):
     """Deactivate (soft-delete) a user."""
     found = await database.delete_user(user_id)
     if not found:
@@ -69,7 +55,7 @@ async def delete_user(user_id: str, _admin=Depends(_require_admin)):
 
 
 @router.post("/{user_id}/password")
-async def change_password(user_id: str, body: ChangePasswordRequest, _admin=Depends(_require_admin)):
+async def change_password(user_id: str, body: ChangePasswordRequest, _admin=Depends(require_admin)):
     """Update a user's password."""
     hashed = hash_password(body.password)
     found = await database.update_user_password(user_id, hashed)
