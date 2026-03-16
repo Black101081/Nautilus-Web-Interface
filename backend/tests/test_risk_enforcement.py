@@ -2,10 +2,7 @@
 Risk Enforcement tests — Sprint 3.
 
 Tests that risk limits (max position size, daily loss, leverage, etc.)
-are ACTUALLY ENFORCED when creating orders.
-
-Currently these tests are expected to FAIL because risk limits are saved
-to DB but never checked when placing orders.
+are enforced when creating orders.
 
 Run:
     cd backend
@@ -42,7 +39,6 @@ def client(tmp_path, monkeypatch):
 
 class TestMaxPositionSize:
 
-    @pytest.mark.xfail(reason="S3-03: risk enforcement not implemented yet")
     def test_order_blocked_when_exceeds_max_position(self, client):
         """Order quantity × price > max_position_size must be rejected."""
         # Set a small max position size
@@ -63,7 +59,6 @@ class TestMaxPositionSize:
             f"Expected 400/422, got {r.status_code}: {r.text}"
         assert "position" in r.text.lower() or "risk" in r.text.lower()
 
-    @pytest.mark.xfail(reason="S3-03: risk enforcement not implemented yet")
     def test_order_allowed_within_max_position(self, client):
         """Order within max_position_size limit must be accepted."""
         client.post("/api/risk/limits", json={"max_position_size": 100_000})
@@ -80,7 +75,6 @@ class TestMaxPositionSize:
         )
         assert r.status_code == 200
 
-    @pytest.mark.xfail(reason="S3-03: risk enforcement not implemented yet")
     def test_risk_error_response_contains_limit_value(self, client):
         """Risk error response must state what the limit is."""
         client.post("/api/risk/limits", json={"max_position_size": 500})
@@ -100,7 +94,6 @@ class TestMaxPositionSize:
         # Response should mention the limit value
         assert "500" in body_text or "max_position_size" in body_text
 
-    @pytest.mark.xfail(reason="S3-03: risk enforcement not implemented yet")
     def test_updated_limit_takes_effect_immediately(self, client):
         """Lowering the limit should immediately block previously-allowed orders."""
         # First allow large orders
@@ -128,7 +121,6 @@ class TestMaxPositionSize:
 
 class TestDailyLossLimit:
 
-    @pytest.mark.xfail(reason="S3-03: risk enforcement not implemented yet")
     def test_new_orders_blocked_when_daily_loss_exceeded(self, client):
         """When today's realized loss > max_daily_loss, new orders are blocked."""
         client.post("/api/risk/limits", json={"max_daily_loss": 100})
@@ -157,7 +149,6 @@ class TestDailyLossLimit:
         assert r.status_code in (400, 422, 429)
         assert "daily" in r.text.lower() or "loss" in r.text.lower()
 
-    @pytest.mark.xfail(reason="S3-04: daily loss auto-stop not implemented yet")
     def test_daily_loss_auto_stops_all_strategies(self, client):
         """When daily loss limit reached, all running strategies must auto-stop."""
         # Create and start a strategy
@@ -197,7 +188,6 @@ class TestDailyLossLimit:
 
 class TestLeverageLimits:
 
-    @pytest.mark.xfail(reason="S3-03: leverage enforcement not implemented yet")
     def test_order_blocked_exceeds_leverage_limit(self, client):
         """Order with leverage > max_leverage must be rejected."""
         client.post("/api/risk/limits", json={"max_leverage": 3.0})
@@ -215,7 +205,6 @@ class TestLeverageLimits:
         assert r.status_code in (400, 422)
         assert "leverage" in r.text.lower()
 
-    @pytest.mark.xfail(reason="S3-03: leverage enforcement not implemented yet")
     def test_order_allowed_within_leverage_limit(self, client):
         """Order with leverage ≤ max_leverage must pass risk check."""
         client.post("/api/risk/limits", json={"max_leverage": 5.0})
@@ -239,7 +228,6 @@ class TestLeverageLimits:
 
 class TestMaxOrdersPerDay:
 
-    @pytest.mark.xfail(reason="S3-03: order count enforcement not implemented yet")
     def test_orders_blocked_after_daily_limit(self, client):
         """After max_orders_per_day is reached, further orders are blocked."""
         client.post("/api/risk/limits", json={"max_orders_per_day": 3})
@@ -260,7 +248,6 @@ class TestMaxOrdersPerDay:
         assert r.status_code in (400, 422, 429)
         assert "daily" in r.text.lower() or "limit" in r.text.lower()
 
-    @pytest.mark.xfail(reason="S3-03: order count enforcement not implemented yet")
     def test_order_count_resets_next_day(self, client):
         """Order counter must reset at midnight (UTC)."""
         # This test is verified by checking the count endpoint
@@ -293,7 +280,6 @@ class TestRiskMetricsEndpoint:
         assert "total_exposure" in body
         assert "total_pnl" in body
 
-    @pytest.mark.xfail(reason="S3-03: detailed risk metrics not implemented yet")
     def test_risk_metrics_has_daily_loss_field(self, client):
         """Risk metrics must include today's realized loss."""
         r = client.get("/api/risk/metrics")
@@ -301,7 +287,6 @@ class TestRiskMetricsEndpoint:
         assert "daily_realized_loss" in body
         assert isinstance(body["daily_realized_loss"], (int, float))
 
-    @pytest.mark.xfail(reason="S3-03: detailed risk metrics not implemented yet")
     def test_risk_metrics_has_orders_today_field(self, client):
         """Risk metrics must include order count for today."""
         r = client.get("/api/risk/metrics")
@@ -309,7 +294,6 @@ class TestRiskMetricsEndpoint:
         assert "orders_today" in body
         assert isinstance(body["orders_today"], int)
 
-    @pytest.mark.xfail(reason="S3-03: detailed risk metrics not implemented yet")
     def test_risk_metrics_has_limit_utilization(self, client):
         """Risk metrics should show % utilization of each limit."""
         r = client.get("/api/risk/metrics")

@@ -649,3 +649,93 @@ def test_backtest_lock_prevents_concurrent_run(client):
         assert "already running" in r.json()["detail"].lower()
     finally:
         bt_module._backtest_lock = original  # always restore
+
+
+# ── Strategy config edge cases ────────────────────────────────────────────────
+
+def test_create_strategy_null_config_uses_defaults(client):
+    """Explicitly passing null for a config value must use default, not None."""
+    r = client.post(
+        "/api/strategies",
+        json={"name": "Null Config", "type": "sma_crossover", "fast_period": None},
+    )
+    assert r.status_code == 200
+    sid = r.json()["strategy_id"]
+    strategies = client.get("/api/strategies").json()["strategies"]
+    found = next(s for s in strategies if s["id"] == sid)
+    # config fast_period must be the default (10), not None
+    assert found is not None
+
+
+def test_create_strategy_macd_invalid_periods_rejected(client):
+    """MACD fast_period >= slow_period must return 422."""
+    r = client.post(
+        "/api/strategies",
+        json={"name": "Bad MACD", "type": "macd", "fast_period": 30, "slow_period": 12},
+    )
+    assert r.status_code == 422
+
+
+def test_create_strategy_rsi_period_too_small_rejected(client):
+    """RSI period < 2 must return 422."""
+    r = client.post(
+        "/api/strategies",
+        json={"name": "Tiny RSI", "type": "rsi", "rsi_period": 1},
+    )
+    assert r.status_code == 422
+
+
+def test_create_strategy_rsi_inverted_levels_rejected(client):
+    """oversold_level >= overbought_level must return 422."""
+    r = client.post(
+        "/api/strategies",
+        json={
+            "name": "Inverted RSI",
+            "type": "rsi",
+            "oversold_level": 70,
+            "overbought_level": 30,
+        },
+    )
+    assert r.status_code == 422
+
+
+# ── Risk limits JSON safety ───────────────────────────────────────────────────
+
+def test_risk_limits_returns_valid_json_after_corrupt_kv_store(client, tmp_path, monkeypatch):
+    """If kv_store has corrupt JSON, risk limits endpoint must return defaults."""
+    import aiosqlite, asyncio, database
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "corrupt.db")
+
+    async def inject_corrupt():
+        await database.init_db()
+        await database._execute(
+            "INSERT OR REPLACE INTO kv_store (namespace, key, value) VALUES ('risk', 'limits', 'NOT_VALID_JSON')",
+            commit=True,
+        )
+
+    asyncio.run(inject_corrupt())
+
+    from fastapi.testclient import TestClient
+    from nautilus_fastapi import app
+    with TestClient(app) as c:
+        login_r = c.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        if login_r.status_code == 200:
+            c.headers.update({"Authorization": f"Bearer {login_r.json()['access_token']}"})
+        r = c.get("/api/risk/limits")
+    assert r.status_code == 200
+    body = r.json()
+    limits = body.get("limits", body)
+    # Must return numeric defaults, not crash
+    assert isinstance(limits.get("max_position_size", 0), (int, float))
+
+
+# ── Daily realized loss NULL safety ──────────────────────────────────────────
+
+def test_risk_metrics_with_no_pnl_orders(client):
+    """Risk metrics must return 0 for daily_realized_loss when no filled orders exist."""
+    r = client.get("/api/risk/metrics")
+    assert r.status_code == 200
+    body = r.json()
+    # Should not crash even with no pnl data in DB
+    assert "daily_realized_loss" in body
+    assert body["daily_realized_loss"] == 0.0

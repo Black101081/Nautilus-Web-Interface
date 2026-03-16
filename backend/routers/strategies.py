@@ -222,8 +222,8 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
 
     # SMA period validation
     if strategy_type == "sma_crossover":
-        fast = int(body.get("fast_period", 10))
-        slow = int(body.get("slow_period", 20))
+        fast = int(body.get("fast_period") or 10)
+        slow = int(body.get("slow_period") or 20)
         if fast >= slow:
             raise HTTPException(
                 status_code=422,
@@ -232,9 +232,9 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
 
     # RSI validation
     if strategy_type == "rsi":
-        rsi_period = int(body.get("rsi_period", 14))
-        oversold = float(body.get("oversold_level", 30.0))
-        overbought = float(body.get("overbought_level", 70.0))
+        rsi_period = int(body.get("rsi_period") or 14)
+        oversold = float(body.get("oversold_level") or 30.0)
+        overbought = float(body.get("overbought_level") or 70.0)
         if rsi_period < 2:
             raise HTTPException(status_code=422, detail="rsi_period must be >= 2")
         if oversold >= overbought:
@@ -245,8 +245,8 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
 
     # MACD validation
     if strategy_type == "macd":
-        fast = int(body.get("fast_period", 12))
-        slow = int(body.get("slow_period", 26))
+        fast = int(body.get("fast_period") or 12)
+        slow = int(body.get("slow_period") or 26)
         if fast >= slow:
             raise HTTPException(
                 status_code=422,

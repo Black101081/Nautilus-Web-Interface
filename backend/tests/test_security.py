@@ -1,8 +1,7 @@
 """
 Security tests — Sprint 1: Credential Encryption & JWT Auth & Rate Limiting.
 
-These tests define the REQUIRED behaviour for Sprint 1 implementation.
-Tests marked with @pytest.mark.xfail are expected to fail until implemented.
+These tests cover credential encryption, JWT auth, rate limiting, and input sanitisation.
 
 Run:
     cd backend
@@ -60,7 +59,6 @@ class TestCredentialEncryption:
                 c.headers.update({"Authorization": f"Bearer {token}"})
             yield c
 
-    @pytest.mark.xfail(reason="S1-01: credential encryption not implemented yet")
     def test_stored_key_is_not_plaintext(self, client, db_path):
         """After connecting, the DB must NOT contain the raw API key."""
         import sqlite3
@@ -79,7 +77,6 @@ class TestCredentialEncryption:
         assert stored_key != "MY_PLAIN_KEY_12345", "api_key stored in plaintext!"
         assert stored_secret != "MY_PLAIN_SECRET_99", "api_secret stored in plaintext!"
 
-    @pytest.mark.xfail(reason="S1-01: credential encryption not implemented yet")
     def test_ciphertext_is_not_empty(self, client, db_path):
         """The stored ciphertext must be non-empty (something was actually stored)."""
         import sqlite3
@@ -98,7 +95,6 @@ class TestCredentialEncryption:
         assert row is not None
         assert len(row[0]) > 10, "Stored credential too short to be encrypted"
 
-    @pytest.mark.xfail(reason="S1-01: credential encryption not implemented yet")
     def test_api_response_masks_key(self, client):
         """GET /api/adapters/{id} must return masked key, NOT the real key."""
         client.post(
@@ -115,7 +111,6 @@ class TestCredentialEncryption:
         masked = body.get("api_key_masked", body.get("api_key", ""))
         assert "REAL_KEY_XYZ" not in masked, "Plaintext key leaked in API response"
 
-    @pytest.mark.xfail(reason="S1-01: credential encryption not implemented yet")
     def test_list_adapters_does_not_leak_keys(self, client):
         """GET /api/adapters list must never expose plaintext credentials."""
         client.post(
@@ -128,7 +123,6 @@ class TestCredentialEncryption:
         assert "SECRET_LIST_KEY" not in body_text
         assert "SECRET_LIST_SECRET" not in body_text
 
-    @pytest.mark.xfail(reason="S1-01: credential encryption not implemented yet")
     def test_mask_shows_last_four_chars(self, client):
         """Masked key should reveal only the last 4 characters: '****abcd'."""
         client.post(
@@ -142,7 +136,6 @@ class TestCredentialEncryption:
         assert masked.endswith("1234"), f"Expected last 4 chars '1234', got '{masked}'"
         assert masked.startswith("*"), "Masked key should start with asterisks"
 
-    @pytest.mark.xfail(reason="S1-01: credential encryption not implemented yet")
     def test_different_keys_produce_different_ciphertexts(self, client, db_path):
         """Two different keys must produce different ciphertexts (no deterministic IV)."""
         import sqlite3
@@ -165,7 +158,6 @@ class TestCredentialEncryption:
         assert len(rows) >= 2
         assert rows[0][0] != rows[1][0], "Different keys must produce different ciphertexts"
 
-    @pytest.mark.xfail(reason="S1-01: credential encryption not implemented yet")
     def test_reconnect_with_new_key_updates_ciphertext(self, client, db_path):
         """Reconnecting with a new API key must update the stored ciphertext."""
         import sqlite3
@@ -198,7 +190,6 @@ class TestJWTAuth:
     All API routes (except health/login) must require a valid JWT Bearer token.
     """
 
-    @pytest.mark.xfail(reason="S1-02: JWT auth not implemented yet")
     def test_login_returns_access_token(self, client):
         """POST /api/auth/login must return a JWT access_token."""
         r = client.post(
@@ -211,7 +202,6 @@ class TestJWTAuth:
         assert body["token_type"] == "bearer"
         assert len(body["access_token"]) > 20  # JWT is at least 20 chars
 
-    @pytest.mark.xfail(reason="S1-02: JWT auth not implemented yet")
     def test_login_wrong_password_returns_401(self, client):
         """Wrong password must return 401."""
         r = client.post(
@@ -220,13 +210,11 @@ class TestJWTAuth:
         )
         assert r.status_code == 401
 
-    @pytest.mark.xfail(reason="S1-02: JWT auth not implemented yet")
     def test_protected_route_without_token_returns_401(self, client):
         """Without Authorization header, protected routes return 401."""
         r = client.get("/api/strategies")
         assert r.status_code == 401
 
-    @pytest.mark.xfail(reason="S1-02: JWT auth not implemented yet")
     def test_protected_route_with_valid_token(self, client):
         """With valid Bearer token, protected routes are accessible."""
         login_r = client.post(
@@ -241,7 +229,6 @@ class TestJWTAuth:
         )
         assert r.status_code == 200
 
-    @pytest.mark.xfail(reason="S1-02: JWT auth not implemented yet")
     def test_invalid_token_returns_401(self, client):
         """Garbage token must return 401."""
         r = client.get(
@@ -250,13 +237,11 @@ class TestJWTAuth:
         )
         assert r.status_code == 401
 
-    @pytest.mark.xfail(reason="S1-02: JWT auth not implemented yet")
     def test_health_endpoint_does_not_require_auth(self, client):
         """GET /api/health must always be public (no auth required)."""
         r = client.get("/api/health")
         assert r.status_code in (200, 503)  # either ok or degraded, not 401
 
-    @pytest.mark.xfail(reason="S1-02: JWT auth not implemented yet")
     def test_token_contains_username(self, client):
         """Decoded JWT payload must contain 'sub' (username)."""
         import base64
@@ -277,7 +262,6 @@ class TestJWTAuth:
         assert "sub" in payload
         assert payload["sub"] == "admin"
 
-    @pytest.mark.xfail(reason="S1-02: JWT auth not implemented yet")
     def test_token_has_expiry(self, client):
         """Decoded JWT payload must contain 'exp' (expiry timestamp)."""
         import base64
@@ -294,7 +278,6 @@ class TestJWTAuth:
 
         assert "exp" in payload
 
-    @pytest.mark.xfail(reason="S1-02: JWT auth not implemented yet")
     def test_refresh_token_extends_expiry(self, client):
         """POST /api/auth/refresh must return a new token with new expiry."""
         login_r = client.post(
@@ -321,7 +304,6 @@ class TestRateLimiting:
     API must enforce rate limits to prevent brute-force and abuse.
     """
 
-    @pytest.mark.xfail(reason="S1-05: rate limiting not implemented yet")
     def test_login_rate_limit_after_5_attempts(self, client):
         """5+ failed login attempts in a row must result in 429."""
         for i in range(5):
@@ -338,13 +320,11 @@ class TestRateLimiting:
         assert r.status_code == 429
         assert "retry" in r.text.lower() or "rate" in r.text.lower()
 
-    @pytest.mark.xfail(reason="S1-05: rate limiting not implemented yet")
     def test_response_has_ratelimit_header(self, client):
         """All responses should include X-RateLimit-Remaining header."""
         r = client.get("/api/health")
         assert "X-RateLimit-Remaining" in r.headers
 
-    @pytest.mark.xfail(reason="S1-05: rate limiting not implemented yet")
     def test_ratelimit_remaining_decrements(self, client):
         """X-RateLimit-Remaining must decrease with each request."""
         r1 = client.get("/api/health")

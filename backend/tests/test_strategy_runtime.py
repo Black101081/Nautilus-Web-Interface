@@ -37,14 +37,10 @@ def client(tmp_path, monkeypatch):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SECTION 1 — Strategy Lifecycle (currently passes DB-level, xfail engine-level)
+# SECTION 1 — Strategy Lifecycle
 # ═════════════════════════════════════════════════════════════════════════════
 
 class TestStrategyLifecycle:
-    """
-    Some tests pass today (DB persistence).
-    xfail tests require live engine integration.
-    """
 
     def test_strategy_status_is_running_after_start(self, client):
         """After start, DB status must be 'running'."""
@@ -65,7 +61,6 @@ class TestStrategyLifecycle:
         found = [s for s in r.json()["strategies"] if s["id"] == sid]
         assert found[0]["status"] == "stopped"
 
-    @pytest.mark.xfail(reason="S3-01: live engine strategy registration not implemented yet")
     def test_start_registers_strategy_in_live_engine(self, client):
         """Starting a strategy must register it with the running engine."""
         from unittest.mock import patch, MagicMock
@@ -82,7 +77,6 @@ class TestStrategyLifecycle:
 
             mock_system.start_strategy.assert_called_once_with(sid)
 
-    @pytest.mark.xfail(reason="S3-01: live engine strategy stop not implemented yet")
     def test_stop_deregisters_strategy_from_live_engine(self, client):
         """Stopping a strategy must deregister it from the engine."""
         from unittest.mock import patch, MagicMock
@@ -100,7 +94,6 @@ class TestStrategyLifecycle:
 
             mock_system.stop_strategy.assert_called_once_with(sid)
 
-    @pytest.mark.xfail(reason="S3-01: live performance update not implemented yet")
     def test_strategy_performance_updates_after_trade(self, client):
         """After a trade is executed, strategy performance metrics must update."""
         r = client.post(
@@ -222,7 +215,6 @@ class TestRSILogic:
         rsi = self._compute_rsi(prices)
         assert rsi > 70, f"Expected RSI > 70 for rising prices, got {rsi:.1f}"
 
-    @pytest.mark.xfail(reason="API does not yet validate rsi_period < 2")
     def test_rsi_period_validation(self, client):
         """RSI period must be between 2 and 200."""
         r = client.post(
@@ -239,7 +231,6 @@ class TestRSILogic:
         )
         assert r.status_code == 200
 
-    @pytest.mark.xfail(reason="API does not yet validate oversold < overbought")
     def test_rsi_overbought_oversold_levels_validation(self, client):
         """oversold_level must be < overbought_level."""
         r = client.post(
@@ -260,7 +251,6 @@ class TestRSILogic:
 
 class TestMACDStrategy:
 
-    @pytest.mark.xfail(reason="S3-02: MACD strategy type not implemented yet")
     def test_create_macd_strategy(self, client):
         """Creating a MACD strategy must succeed with valid parameters."""
         r = client.post(
@@ -278,7 +268,6 @@ class TestMACDStrategy:
         assert body["success"] is True
         assert body["strategy_id"] is not None
 
-    @pytest.mark.xfail(reason="S3-02: MACD strategy type not implemented yet")
     def test_macd_fast_must_be_less_than_slow(self, client):
         """MACD fast_period >= slow_period must be rejected."""
         r = client.post(
@@ -293,7 +282,6 @@ class TestMACDStrategy:
         )
         assert r.status_code == 422
 
-    @pytest.mark.xfail(reason="S3-02: MACD strategy type not implemented yet")
     def test_macd_in_strategy_types_list(self, client):
         """GET /api/strategy-types must include 'macd'."""
         r = client.get("/api/strategy-types")
@@ -301,7 +289,6 @@ class TestMACDStrategy:
         types = [t["id"] for t in body.get("strategy_types", [])]
         assert "macd" in types
 
-    @pytest.mark.xfail(reason="S3-02: MACD strategy not implemented yet")
     def test_macd_line_crossover_logic(self):
         """MACD line crossing above signal line → BUY."""
         # macd_line > signal_line → bullish crossover → BUY
@@ -309,7 +296,6 @@ class TestMACDStrategy:
         signal_line = 0.2
         assert macd_line > signal_line  # Buy condition met
 
-    @pytest.mark.xfail(reason="S3-02: MACD strategy not implemented yet")
     def test_macd_strategy_appears_in_list(self, client):
         """After creating a MACD strategy, it must appear in /api/strategies."""
         r = client.post(
@@ -344,7 +330,6 @@ class TestStrategyTypesRegistry:
         assert "sma_crossover" in types
         assert "rsi" in types
 
-    @pytest.mark.xfail(reason="S3-02: MACD not added yet")
     def test_strategy_types_includes_macd(self, client):
         r = client.get("/api/strategy-types")
         types = [t["id"] for t in r.json().get("strategy_types", [])]

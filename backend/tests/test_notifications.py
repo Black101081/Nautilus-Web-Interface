@@ -2,7 +2,6 @@
 Notification tests — Sprint 1.
 
 Tests for email and Telegram notification delivery when alerts trigger.
-All tests are xfail until notification backend is implemented.
 
 Run:
     cd backend
@@ -40,7 +39,6 @@ def client(tmp_path, monkeypatch):
 
 class TestEmailNotification:
 
-    @pytest.mark.xfail(reason="S1-03: email notifications not implemented yet")
     def test_email_sent_when_alert_triggered(self, client):
         """When an alert is triggered, an email must be sent if email is enabled."""
         import asyncio
@@ -75,7 +73,6 @@ class TestEmailNotification:
             call_args = mock_send.call_args
             assert "BTCUSDT" in str(call_args) or "alert" in str(call_args).lower()
 
-    @pytest.mark.xfail(reason="S1-03: email notifications not implemented yet")
     def test_email_not_sent_when_disabled(self, client):
         """When email notifications are disabled, no email should be sent."""
         import asyncio
@@ -96,7 +93,6 @@ class TestEmailNotification:
             asyncio.run(database.trigger_alert(alert_id))
             mock_send.assert_not_called()
 
-    @pytest.mark.xfail(reason="S1-03: test-email endpoint not implemented yet")
     def test_send_test_email_endpoint(self, client):
         """POST /api/notifications/test-email must attempt to send a test email."""
         with patch("notifications.EmailNotifier.send", new_callable=AsyncMock) as mock_send:
@@ -110,7 +106,6 @@ class TestEmailNotification:
             assert body.get("success") is True
             mock_send.assert_called_once()
 
-    @pytest.mark.xfail(reason="S1-03: email notifications not implemented yet")
     def test_email_contains_alert_details(self, client):
         """Email body must include: symbol, condition, price, timestamp."""
         import asyncio
@@ -140,7 +135,6 @@ class TestEmailNotification:
         assert "SOLUSDT" in email["body"] or "SOLUSDT" in email["subject"]
         assert "200" in email["body"]
 
-    @pytest.mark.xfail(reason="S1-03: email retry not implemented yet")
     def test_email_retries_on_smtp_error(self, client):
         """If SMTP fails, email delivery must be retried up to 3 times."""
         import asyncio
@@ -176,7 +170,6 @@ class TestEmailNotification:
 
 class TestTelegramNotification:
 
-    @pytest.mark.xfail(reason="S1-04: telegram notifications not implemented yet")
     def test_telegram_message_sent_on_trigger(self, client):
         """When alert triggers and Telegram enabled, Bot API must be called."""
         import asyncio
@@ -208,7 +201,6 @@ class TestTelegramNotification:
             assert "api.telegram.org" in call_url
             assert "bot123:ABC" in call_url
 
-    @pytest.mark.xfail(reason="S1-04: telegram notifications not implemented yet")
     def test_telegram_not_sent_when_disabled(self, client):
         """Telegram must not be called when disabled."""
         import asyncio
@@ -229,7 +221,6 @@ class TestTelegramNotification:
             asyncio.run(database.trigger_alert(alert_id))
             mock_post.assert_not_called()
 
-    @pytest.mark.xfail(reason="S1-04: test-telegram endpoint not implemented yet")
     def test_send_test_telegram_endpoint(self, client):
         """POST /api/notifications/test-telegram sends a test message."""
         with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -241,7 +232,6 @@ class TestTelegramNotification:
             assert r.status_code == 200
             assert r.json().get("success") is True
 
-    @pytest.mark.xfail(reason="S1-04: telegram notifications not implemented yet")
     def test_telegram_message_contains_symbol_and_price(self, client):
         """Telegram message must include the alert symbol and threshold price."""
         import asyncio
@@ -317,7 +307,6 @@ class TestNotificationSettings:
         assert notif.get("telegram_enabled") is True
         assert notif.get("telegram_chat_id") == "12345678"
 
-    @pytest.mark.xfail(reason="S1-03: telegram_bot_token must be stored encrypted")
     def test_telegram_bot_token_not_in_plain_settings(self, client):
         """Telegram bot token must not appear plaintext in GET /api/settings."""
         client.post(
@@ -332,7 +321,6 @@ class TestNotificationSettings:
         assert "SUPER_SECRET_TOKEN" not in r.text, \
             "Bot token must not appear in plain text in GET /api/settings"
 
-    @pytest.mark.xfail(reason="S1-03: SMTP password must be stored encrypted")
     def test_smtp_password_not_in_plain_settings(self, client):
         """SMTP password must not appear plaintext in GET /api/settings."""
         client.post(

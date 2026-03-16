@@ -47,7 +47,6 @@ def client(tmp_path, monkeypatch):
 
 class TestLiveTradingNodeLifecycle:
 
-    @pytest.mark.xfail(reason="S2-01: LiveTradingNode not implemented yet")
     def test_engine_info_shows_node_type(self, client):
         """GET /api/engine/info must indicate whether using BacktestEngine or LiveTradingNode."""
         r = client.get("/api/engine/info")
@@ -55,7 +54,6 @@ class TestLiveTradingNodeLifecycle:
         assert "engine_type" in body
         assert body["engine_type"] in ("backtest", "live")
 
-    @pytest.mark.xfail(reason="S2-01: LiveTradingNode not implemented yet")
     def test_connect_adapter_switches_to_live_node(self, client):
         """Connecting a live adapter should activate LiveTradingNode."""
         with patch("live_trading.LiveTradingManager.connect_binance", new_callable=AsyncMock) as mock_connect:
@@ -66,7 +64,6 @@ class TestLiveTradingNodeLifecycle:
             )
             mock_connect.assert_called_once()
 
-    @pytest.mark.xfail(reason="S2-01: LiveTradingNode not implemented yet")
     def test_live_node_status_in_engine_info(self, client):
         """After connecting adapter, engine info must show live node is active."""
         with patch("live_trading.LiveTradingManager.connect_binance", new_callable=AsyncMock) as m:
@@ -81,7 +78,6 @@ class TestLiveTradingNodeLifecycle:
         assert body.get("engine_type") == "live"
         assert body.get("live_node_active") is True
 
-    @pytest.mark.xfail(reason="S2-01: LiveTradingNode not implemented yet")
     def test_disconnect_shuts_down_live_node(self, client):
         """Disconnecting adapter must stop the LiveTradingNode gracefully."""
         with patch("live_trading.LiveTradingManager.disconnect", new_callable=AsyncMock) as mock_disconnect:
@@ -90,7 +86,6 @@ class TestLiveTradingNodeLifecycle:
             assert r.status_code == 200
             mock_disconnect.assert_called_once()
 
-    @pytest.mark.xfail(reason="S2-01: LiveTradingNode not implemented yet")
     def test_live_trading_module_exists(self):
         """live_trading.py module must exist and import cleanly."""
         try:
@@ -110,7 +105,6 @@ class TestAdapterInterface:
     They test the CONTRACT, not the real exchange.
     """
 
-    @pytest.mark.xfail(reason="S2-02: adapter interface classes not defined yet")
     def test_binance_adapter_has_required_methods(self):
         """BinanceAdapter class must have connect/disconnect/subscribe/get_balance."""
         try:
@@ -122,7 +116,6 @@ class TestAdapterInterface:
         for method in ("connect", "disconnect", "subscribe_ticker", "get_balance", "submit_order"):
             assert hasattr(adapter, method), f"BinanceAdapter missing method: {method}"
 
-    @pytest.mark.xfail(reason="S2-02: adapter interface classes not defined yet")
     def test_adapter_connect_returns_structured_result(self):
         """Adapter.connect() must return dict with 'success' and 'connection_id'."""
         from adapters.binance import BinanceAdapter
@@ -138,7 +131,6 @@ class TestAdapterInterface:
             assert "success" in result
             assert "connection_id" in result
 
-    @pytest.mark.xfail(reason="S2-02: adapter interface classes not defined yet")
     def test_adapter_connection_id_stored_in_db(self, client, tmp_path):
         """After real connect, the connection_id must be stored in adapter_configs."""
         import asyncio
@@ -158,7 +150,6 @@ class TestAdapterInterface:
         assert "connection_id" in body
         assert body["connection_id"] == "CONN-XYZ-001"
 
-    @pytest.mark.xfail(reason="S2-02: real ping not implemented yet")
     def test_adapter_connect_status_only_set_after_ws_handshake(self, client):
         """Status 'connected' must only be set AFTER WebSocket handshake succeeds."""
         with patch("live_trading.LiveTradingManager.connect_binance", new_callable=AsyncMock) as m:
@@ -180,7 +171,6 @@ class TestAdapterInterface:
 
 class TestOrderRouting:
 
-    @pytest.mark.xfail(reason="S2-03: order routing not implemented yet")
     def test_order_routed_to_exchange_when_adapter_connected(self, client):
         """When adapter connected, new orders must be submitted to exchange."""
         with patch("live_trading.LiveTradingManager.submit_order", new_callable=AsyncMock) as mock_submit:
@@ -207,7 +197,6 @@ class TestOrderRouting:
             body = r.json()
             assert body.get("exchange_order_id") == "EXCHANGE-ORD-001"
 
-    @pytest.mark.xfail(reason="S2-03: order routing not implemented yet")
     def test_order_rejected_when_no_adapter_connected(self, client):
         """Without connected adapter, live orders must be rejected with clear error."""
         with patch("live_trading.LiveTradingManager.is_connected", return_value=False):
@@ -223,7 +212,6 @@ class TestOrderRouting:
         assert r.status_code in (400, 422)
         assert "adapter" in r.text.lower() or "connect" in r.text.lower()
 
-    @pytest.mark.xfail(reason="S2-03: order routing not implemented yet")
     def test_order_cancel_sent_to_exchange(self, client):
         """DELETE /api/orders/{id} must cancel the order on the exchange."""
         with patch("live_trading.LiveTradingManager.cancel_order", new_callable=AsyncMock) as mock_cancel:
@@ -234,7 +222,6 @@ class TestOrderRouting:
 
             mock_cancel.assert_called_once_with("ORD-TEST-001")
 
-    @pytest.mark.xfail(reason="S2-03: order status update from exchange not implemented yet")
     def test_order_status_updates_from_exchange_websocket(self, client):
         """Order status in DB must update when exchange sends fill notification via WS."""
         # This tests the WS handler that processes exchange order updates
@@ -264,7 +251,6 @@ class TestOrderRouting:
 
 class TestPositionSync:
 
-    @pytest.mark.xfail(reason="S2-04: live position sync not implemented yet")
     def test_positions_have_source_field(self, client):
         """GET /api/positions must include 'source' field: 'live' or 'cached'."""
         r = client.get("/api/positions")
@@ -273,7 +259,6 @@ class TestPositionSync:
         if positions:
             assert "source" in positions[0], "Positions must have 'source' field"
 
-    @pytest.mark.xfail(reason="S2-04: live position sync not implemented yet")
     def test_live_position_sync_endpoint(self, client):
         """POST /api/positions/sync must trigger a sync from exchange."""
         with patch("live_trading.LiveTradingManager.sync_positions", new_callable=AsyncMock) as mock_sync:
@@ -284,7 +269,6 @@ class TestPositionSync:
             assert r.status_code == 200
             mock_sync.assert_called_once()
 
-    @pytest.mark.xfail(reason="S2-04: live position close not implemented yet")
     def test_close_position_sends_market_sell(self, client):
         """Closing a LONG position must send a SELL market order to exchange."""
         with patch("live_trading.LiveTradingManager.submit_order", new_callable=AsyncMock) as mock_submit:
@@ -307,7 +291,6 @@ class TestPositionSync:
 
 class TestMarketDataWebSocket:
 
-    @pytest.mark.xfail(reason="S2-05: WebSocket market data feed not implemented yet")
     def test_subscribe_ticker_method_exists(self):
         """LiveTradingManager must have a subscribe_ticker method."""
         try:
@@ -318,7 +301,6 @@ class TestMarketDataWebSocket:
         except ImportError:
             pytest.fail("live_trading module not found")
 
-    @pytest.mark.xfail(reason="S2-05: WebSocket market data feed not implemented yet")
     def test_market_data_ws_reconnects_on_disconnect(self):
         """WebSocket client must auto-reconnect with exponential backoff on failure."""
         from live_trading import LiveTradingManager
