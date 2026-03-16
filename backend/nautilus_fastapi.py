@@ -36,6 +36,7 @@ from routers import (
     risk,
     strategies,
     system,
+    users,
 )
 from routers.strategies import load_strategies_from_db
 from routers.components import load_component_states
@@ -221,6 +222,7 @@ app.include_router(backtest.router)
 app.include_router(adapters.router)
 app.include_router(database_ops.router)
 app.include_router(components.router)
+app.include_router(users.router)
 
 
 # ── Root endpoint ─────────────────────────────────────────────────────────────

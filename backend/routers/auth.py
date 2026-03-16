@@ -6,10 +6,13 @@ Endpoints:
   POST /api/auth/refresh  — issue fresh token given valid existing token
 """
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+import database
 from auth_jwt import authenticate_user, create_access_token, decode_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -24,12 +27,17 @@ class LoginRequest(BaseModel):
 @router.post("/login")
 async def login(body: LoginRequest):
     """Authenticate with username/password and return a JWT access token."""
-    user = authenticate_user(body.username, body.password)
+    user = await authenticate_user(body.username, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = create_access_token({"sub": user["username"], "role": user["role"]})
-    return {"access_token": token, "token_type": "bearer"}
+    # Honour session_timeout from settings (minutes → timedelta); fall back to JWT_EXPIRE_HOURS
+    settings = await database.get_settings()
+    session_minutes = settings.get("security", {}).get("session_timeout", 0)
+    expires = timedelta(minutes=int(session_minutes)) if session_minutes else None
+
+    token = create_access_token({"sub": user["username"], "role": user["role"]}, expires_delta=expires)
+    return {"access_token": token, "token_type": "bearer", "role": user["role"]}
 
 
 @router.post("/refresh")

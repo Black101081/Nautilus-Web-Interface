@@ -3,7 +3,7 @@ JWT authentication utilities — Sprint 1 (S1-02).
 
 Provides token creation, validation, and user authentication.
 Uses bcrypt directly (avoids passlib 1.7.x / bcrypt 5.x incompatibility).
-Users are stored in-memory for MVP (Sprint 4 will migrate to DB).
+Users are persisted in SQLite (users table) seeded at startup.
 """
 
 import os
@@ -20,7 +20,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "8"))
 
 
-def _hash_password(password: str) -> str:
+def hash_password(password: str) -> str:
     """Hash a password using bcrypt directly."""
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
@@ -33,20 +33,10 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-# ── Hardcoded user store (MVP — Sprint 4 replaces with DB) ───────────────────
-
-_USERS: dict = {
-    "admin": {
-        "username": "admin",
-        "hashed_password": _hash_password(os.getenv("ADMIN_PASSWORD", "admin")),
-        "role": "admin",
-    }
-}
-
-
-def authenticate_user(username: str, password: str) -> Optional[dict]:
-    """Return user dict if credentials are valid, else None."""
-    user = _USERS.get(username)
+async def authenticate_user(username: str, password: str) -> Optional[dict]:
+    """Return user dict if credentials are valid, else None (DB-backed)."""
+    import database
+    user = await database.get_user(username)
     if user and verify_password(password, user["hashed_password"]):
         return user
     return None

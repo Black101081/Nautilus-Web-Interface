@@ -180,6 +180,10 @@ async def init_db() -> None:
 
         await _seed_defaults(db)
 
+    # Seed admin user outside the schema transaction (needs own connection)
+    admin_pw = __import__("os").getenv("ADMIN_PASSWORD", "admin")
+    await seed_admin_user(admin_pw)
+
 
 async def _seed_defaults(db: aiosqlite.Connection) -> None:
     """Populate kv_store with defaults if they don't exist yet."""
@@ -724,7 +728,7 @@ async def count_orders_today() -> int:
 # ── Users ──────────────────────────────────────────────────────────────────────
 
 async def get_user(username: str) -> Optional[Dict[str, Any]]:
-    """Fetch a user by username."""
+    """Fetch a user by username (active only)."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -732,6 +736,67 @@ async def get_user(username: str) -> Optional[Dict[str, Any]]:
         ) as cur:
             row = await cur.fetchone()
     return dict(row) if row else None
+
+
+async def list_users() -> List[Dict[str, Any]]:
+    """Return all users (hashed_password excluded)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, username, role, is_active, created_at FROM users ORDER BY created_at"
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def create_user(username: str, hashed_password: str, role: str = "trader") -> Dict[str, Any]:
+    """Insert a new user; raises ValueError if username already exists."""
+    user_id = f"USR-{uuid.uuid4().hex[:8].upper()}"
+    created_at = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute(
+                """INSERT INTO users (id, username, hashed_password, role, is_active, created_at)
+                   VALUES (?, ?, ?, ?, 1, ?)""",
+                (user_id, username, hashed_password, role, created_at),
+            )
+            await db.commit()
+        except aiosqlite.IntegrityError:
+            raise ValueError(f"Username '{username}' already exists")
+    return {"id": user_id, "username": username, "role": role, "is_active": 1, "created_at": created_at}
+
+
+async def delete_user(user_id: str) -> bool:
+    """Soft-delete a user (set is_active=0). Returns True if found."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE users SET is_active=0 WHERE id=? AND is_active=1", (user_id,)
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def update_user_password(user_id: str, hashed_password: str) -> bool:
+    """Update a user's hashed password. Returns True if found."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE users SET hashed_password=? WHERE id=? AND is_active=1",
+            (hashed_password, user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def seed_admin_user(admin_password: str) -> None:
+    """Ensure the admin user exists in the DB; creates it if absent."""
+    import bcrypt as _bcrypt
+    existing = await get_user("admin")
+    if not existing:
+        hashed = _bcrypt.hashpw(admin_password.encode(), _bcrypt.gensalt()).decode()
+        try:
+            await create_user("admin", hashed, role="admin")
+        except ValueError:
+            pass  # Race condition: another process inserted admin first
 
 
 # ── Audit log ──────────────────────────────────────────────────────────────────
