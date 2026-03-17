@@ -1,6 +1,6 @@
 /**
  * Central API client for Nautilus Web Interface
- * Handles auth headers, automatic retry with exponential backoff,
+ * Handles JWT Bearer auth, automatic retry with exponential backoff,
  * and structured error objects.
  */
 import { API_CONFIG } from '../config';
@@ -17,11 +17,19 @@ export class ApiError extends Error {
 }
 
 function getAuthHeaders(): Record<string, string> {
-  const apiKey = localStorage.getItem('nautilus_api_key');
-  if (apiKey) {
-    return { 'X-API-Key': apiKey };
+  const token = localStorage.getItem('nautilus_token');
+  if (token) {
+    return { Authorization: `Bearer ${token}` };
   }
   return {};
+}
+
+/** Redirect to login by clearing stored auth and reloading */
+function handleUnauthorized(): void {
+  localStorage.removeItem('nautilus_token');
+  localStorage.removeItem('nautilus_role');
+  // Force reload — App will detect missing token and show LoginPage
+  window.location.reload();
 }
 
 async function request<T>(
@@ -50,6 +58,12 @@ async function request<T>(
       });
 
       if (!response.ok) {
+        // Token expired or invalid — redirect to login immediately
+        if (response.status === 401) {
+          handleUnauthorized();
+          throw new ApiError(401, 'Session expired. Please log in again.');
+        }
+
         const text = await response.text();
         let detail: string | undefined;
         try {

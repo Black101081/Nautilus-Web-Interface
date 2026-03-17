@@ -31,6 +31,7 @@ import AlertsPage from "./pages/AlertsPage";
 import BacktestingPage from "./pages/BacktestingPage";
 import UsersPage from "./pages/UsersPage";
 import LoginPage from "./pages/LoginPage";
+import { API_CONFIG } from "./config";
 
 function Router() {
   useEffect(() => {
@@ -83,22 +84,51 @@ function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // Persist auth across page refreshes via localStorage
-    const stored = localStorage.getItem('nautilus_auth');
-    setAuthenticated(stored === 'true');
+    // Check if stored token is still valid by verifying it hasn't expired
+    const token = localStorage.getItem('nautilus_token');
+    if (!token) {
+      setAuthenticated(false);
+      return;
+    }
+    // Decode JWT payload to check expiry (no library needed for exp check)
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (payload.exp && payload.exp * 1000 < Date.now()) {
+        // Token expired — clear and show login
+        localStorage.removeItem('nautilus_token');
+        localStorage.removeItem('nautilus_role');
+        setAuthenticated(false);
+      } else {
+        setAuthenticated(true);
+      }
+    } catch {
+      localStorage.removeItem('nautilus_token');
+      localStorage.removeItem('nautilus_role');
+      setAuthenticated(false);
+    }
   }, []);
 
-  const handleLogin = (apiKey: string) => {
-    if (apiKey) {
-      localStorage.setItem('nautilus_api_key', apiKey);
-    }
-    localStorage.setItem('nautilus_auth', 'true');
+  const handleLogin = (token: string, role: string) => {
+    localStorage.setItem('nautilus_token', token);
+    localStorage.setItem('nautilus_role', role);
     setAuthenticated(true);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('nautilus_auth');
-    localStorage.removeItem('nautilus_api_key');
+  const handleLogout = async () => {
+    const token = localStorage.getItem('nautilus_token');
+    if (token) {
+      // Notify backend to blacklist the token
+      try {
+        await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/auth/logout`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // Ignore network errors — local logout still proceeds
+      }
+    }
+    localStorage.removeItem('nautilus_token');
+    localStorage.removeItem('nautilus_role');
     setAuthenticated(false);
   };
 

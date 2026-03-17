@@ -41,7 +41,9 @@ export function useWebSocket(): UseWebSocketReturn {
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const wsUrl = `${API_CONFIG.WS_URL}/ws`;
+    // Attach JWT token as query param — WebSocket API doesn't support custom headers
+    const token = localStorage.getItem('nautilus_token') ?? '';
+    const wsUrl = `${API_CONFIG.WS_URL}/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -61,9 +63,16 @@ export function useWebSocket(): UseWebSocketReturn {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setConnected(false);
       wsRef.current = null;
+      // Code 4001 = auth failure — don't reconnect, redirect to login
+      if (event.code === 4001) {
+        localStorage.removeItem('nautilus_token');
+        localStorage.removeItem('nautilus_role');
+        window.location.reload();
+        return;
+      }
       if (shouldReconnect.current) {
         if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
           console.warn(`[WS] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Giving up.`);

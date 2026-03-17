@@ -2,11 +2,14 @@ import React, { useState } from 'react';
 import { API_CONFIG } from '../config';
 
 interface LoginPageProps {
-  onLogin: (apiKey: string) => void;
+  onLogin: (token: string, role: string) => void;
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
-  const [apiKey, setApiKey] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [requires2fa, setRequires2fa] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -16,28 +19,39 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setError('');
 
     try {
-      const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/health`, {
-        headers: apiKey ? { 'X-API-Key': apiKey } : {},
+      const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+          totp_code: totpCode,
+        }),
       });
 
-      if (res.ok) {
-        localStorage.setItem('nautilus_api_key', apiKey);
-        onLogin(apiKey);
-      } else if (res.status === 401) {
-        setError('Invalid API key. Please check and try again.');
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.detail || 'Login failed. Check your credentials.');
+        return;
+      }
+
+      if (data.requires_2fa) {
+        setRequires2fa(true);
+        setError('');
+        return;
+      }
+
+      if (data.access_token) {
+        onLogin(data.access_token, data.role ?? 'trader');
       } else {
-        setError('Could not connect to server. Check the API URL configuration.');
+        setError('Unexpected response from server.');
       }
     } catch {
       setError('Connection failed. Make sure the backend server is running.');
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSkip = () => {
-    localStorage.removeItem('nautilus_api_key');
-    onLogin('');
   };
 
   return (
@@ -51,22 +65,58 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              API Key
-            </label>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none text-gray-900"
-              placeholder="Enter your API key..."
-              autoComplete="current-password"
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              Set on the server via the <code className="bg-gray-100 px-1 rounded">API_KEY</code> environment variable
-            </p>
-          </div>
+          {!requires2fa ? (
+            <>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none text-gray-900"
+                  placeholder="Enter your username..."
+                  autoComplete="username"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none text-gray-900"
+                  placeholder="Enter your password..."
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+            </>
+          ) : (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Two-Factor Authentication Code
+              </label>
+              <input
+                type="text"
+                value={totpCode}
+                onChange={e => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none text-gray-900 text-center text-2xl tracking-widest font-mono"
+                placeholder="000000"
+                maxLength={6}
+                autoComplete="one-time-code"
+                autoFocus
+                required
+              />
+              <p className="text-xs text-gray-400 mt-2 text-center">
+                Enter the 6-digit code from your authenticator app
+              </p>
+            </div>
+          )}
 
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
@@ -79,18 +129,19 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             disabled={loading}
             className="w-full py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold transition-all disabled:opacity-50"
           >
-            {loading ? 'Connecting...' : 'Connect'}
+            {loading ? 'Signing in...' : requires2fa ? 'Verify Code' : 'Sign In'}
           </button>
-        </form>
 
-        <div className="mt-4 text-center">
-          <button
-            onClick={handleSkip}
-            className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            Continue without authentication →
-          </button>
-        </div>
+          {requires2fa && (
+            <button
+              type="button"
+              onClick={() => { setRequires2fa(false); setTotpCode(''); setError(''); }}
+              className="w-full py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+            >
+              ← Back to login
+            </button>
+          )}
+        </form>
 
         <div className="mt-6 pt-6 border-t border-gray-100 text-center">
           <p className="text-xs text-gray-400">

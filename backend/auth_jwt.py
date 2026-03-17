@@ -76,6 +76,10 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer
     payload = decode_token(credentials.credentials)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    # Check token blacklist (revoked via logout)
+    from routers.auth import is_token_revoked
+    if payload.get("jti") and is_token_revoked(payload["jti"]):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
     return payload
 
 

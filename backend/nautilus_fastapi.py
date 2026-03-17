@@ -46,9 +46,46 @@ from alert_monitor import run_alert_monitor
 
 # ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
 
+_WEAK_SECRET = "dev-secret-key-CHANGE-IN-PRODUCTION-min-32-chars"
+
+
+def _check_production_secrets() -> None:
+    """Warn loudly if insecure default secrets are used."""
+    import sys
+    secret_key = os.getenv("SECRET_KEY", _WEAK_SECRET)
+    admin_pw = os.getenv("ADMIN_PASSWORD", "admin")
+    env = os.getenv("ENVIRONMENT", "development").lower()
+
+    warnings = []
+    if secret_key == _WEAK_SECRET or len(secret_key) < 32:
+        warnings.append(
+            "SECRET_KEY is not set or too short (< 32 chars). "
+            "Generate one with: openssl rand -hex 32"
+        )
+    if admin_pw in ("admin", "password", "123456", ""):
+        warnings.append(
+            f"ADMIN_PASSWORD='{admin_pw}' is insecure. Set a strong password via env var."
+        )
+
+    if warnings:
+        border = "=" * 70
+        print(f"\n{border}", file=sys.stderr)
+        print("  SECURITY WARNING", file=sys.stderr)
+        for w in warnings:
+            print(f"  - {w}", file=sys.stderr)
+        # In production mode, refuse to start with insecure defaults
+        if env == "production":
+            print("  Refusing to start in production with insecure defaults.", file=sys.stderr)
+            print(f"{border}\n", file=sys.stderr)
+            sys.exit(1)
+        print(f"{border}\n", file=sys.stderr)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: initialise the SQLite schema + seed defaults
+    # Startup: check secrets before anything else
+    _check_production_secrets()
+    # Initialise the SQLite schema + seed defaults
     await database.init_db()
     # Restore persisted strategies and component states
     await load_strategies_from_db()
@@ -153,6 +190,7 @@ _PUBLIC_PATHS = frozenset(
         "/health",
         "/api/health",
         "/api/auth/login",
+        "/api/auth/logout",
         "/api/auth/refresh",
         "/docs",
         "/redoc",
@@ -195,6 +233,14 @@ async def jwt_middleware(request: Request, call_next):
         return JSONResponse(
             status_code=401,
             content={"detail": "Invalid or expired token"},
+        )
+
+    # Check token blacklist (revoked via logout)
+    from routers.auth import is_token_revoked
+    if payload.get("jti") and is_token_revoked(payload["jti"]):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Token has been revoked"},
         )
 
     request.state.user = payload
@@ -306,7 +352,26 @@ async def _collect_live_snapshot() -> dict:
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, token: str = ""):
+    """
+    WebSocket live-data endpoint.
+    Clients must provide a valid JWT via query param: /ws?token=<jwt>
+    """
+    # Validate token before accepting the connection
+    if not token:
+        await websocket.close(code=4001, reason="Missing authentication token")
+        return
+
+    payload = decode_token(token)
+    if not payload:
+        await websocket.close(code=4001, reason="Invalid or expired token")
+        return
+
+    from routers.auth import is_token_revoked
+    if payload.get("jti") and is_token_revoked(payload["jti"]):
+        await websocket.close(code=4001, reason="Token has been revoked")
+        return
+
     await manager.connect(websocket)
     last_push = 0.0
     try:

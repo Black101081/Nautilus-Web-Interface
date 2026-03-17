@@ -3,6 +3,7 @@ Authentication router — Sprint 1 (S1-02) + Sprint 4 2FA (TOTP).
 
 Endpoints:
   POST /api/auth/login              — issue JWT (with optional TOTP support)
+  POST /api/auth/logout             — blacklist current token
   POST /api/auth/refresh            — issue fresh token
   GET  /api/auth/2fa/setup          — generate new TOTP secret (auth required)
   POST /api/auth/2fa/enable         — verify code then activate 2FA
@@ -13,13 +14,25 @@ Endpoints:
 from datetime import timedelta
 
 import pyotp
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 import database
-from auth_jwt import authenticate_user, create_access_token, get_current_user
+from auth_jwt import authenticate_user, create_access_token, get_current_user, decode_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# In-memory token blacklist — stores revoked JTI (JWT ID) values
+# On restart the set clears, but expired tokens are harmless anyway
+_revoked_jtis: set[str] = set()
+
+
+def is_token_revoked(jti: str) -> bool:
+    return jti in _revoked_jtis
+
+
+def revoke_token(jti: str) -> None:
+    _revoked_jtis.add(jti)
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -76,6 +89,21 @@ async def login(body: LoginRequest):
         "role": user["role"],
         "requires_2fa": False,
     }
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    """
+    Invalidate the caller's JWT by adding its JTI to the blacklist.
+    The token is accepted here and then blocked on all future requests.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        payload = decode_token(token)
+        if payload and payload.get("jti"):
+            revoke_token(payload["jti"])
+    return {"success": True, "message": "Logged out successfully"}
 
 
 @router.post("/refresh")

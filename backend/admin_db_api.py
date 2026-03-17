@@ -19,7 +19,11 @@ from contextlib import asynccontextmanager
 # Environment variables with defaults
 DB_PATH = os.getenv("DB_PATH", "/app/data/admin_panel.db")
 API_PORT = int(os.getenv("ADMIN_DB_API_PORT", "8001"))
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+_cors_env = os.getenv("CORS_ORIGINS", "")
+CORS_ORIGINS = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    or ["http://localhost:3000", "http://localhost:5173"]
+)
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
 # ── Schema creation + seed data ──────────────────────────────────────────────
