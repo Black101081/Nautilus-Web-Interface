@@ -69,17 +69,19 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # noqa: E
 _bearer = HTTPBearer(auto_error=False)
 
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
     """Dependency: verify JWT and return payload. Raises 401 on failure."""
     if not credentials:
         raise HTTPException(status_code=401, detail="Missing token")
     payload = decode_token(credentials.credentials)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-    # Check token blacklist (revoked via logout)
-    from routers.auth import is_token_revoked
-    if payload.get("jti") and is_token_revoked(payload["jti"]):
-        raise HTTPException(status_code=401, detail="Token has been revoked")
+    # Check persistent DB blacklist (survives restarts)
+    jti = payload.get("jti")
+    if jti:
+        import database as _db
+        if await _db.is_token_revoked(jti):
+            raise HTTPException(status_code=401, detail="Token has been revoked")
     return payload
 
 

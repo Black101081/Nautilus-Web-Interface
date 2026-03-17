@@ -156,6 +156,14 @@ async def init_db() -> None:
                 timestamp   TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS revoked_tokens (
+                jti         TEXT PRIMARY KEY,
+                revoked_at  TEXT NOT NULL,
+                expires_at  TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens(expires_at);
+
             CREATE INDEX IF NOT EXISTS idx_orders_status    ON orders(status);
             CREATE INDEX IF NOT EXISTS idx_orders_timestamp ON orders(timestamp);
             CREATE INDEX IF NOT EXISTS idx_alerts_symbol    ON alerts(symbol);
@@ -874,3 +882,37 @@ async def log_action(
             entry,
         )
         await db.commit()
+
+
+# ── Token revocation (persistent blacklist) ───────────────────────────────────
+
+async def revoke_token(jti: str, expires_at: str) -> None:
+    """Persist a revoked JWT JTI so it stays invalid across restarts."""
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO revoked_tokens (jti, revoked_at, expires_at) VALUES (?, ?, ?)",
+            (jti, now, expires_at),
+        )
+        await db.commit()
+
+
+async def is_token_revoked(jti: str) -> bool:
+    """Return True if the JTI has been revoked and has not yet expired."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM revoked_tokens WHERE jti=? AND expires_at > ?",
+            (jti, datetime.now(timezone.utc).isoformat()),
+        ) as cur:
+            return await cur.fetchone() is not None
+
+
+async def purge_expired_revoked_tokens() -> int:
+    """Delete expired tokens from the blacklist. Returns count removed."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM revoked_tokens WHERE expires_at <= ?",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+        await db.commit()
+        return cur.rowcount

@@ -6,6 +6,7 @@ This file wires the FastAPI app together; business logic lives in routers/.
 import asyncio
 import json
 import os
+import secrets
 import sys
 import time
 from collections import defaultdict
@@ -21,7 +22,7 @@ from fastapi.responses import JSONResponse
 sys.path.insert(0, str(Path(__file__).parent))
 
 import database
-from auth import ApiKeyMiddleware
+from auth import ApiKeyMiddleware, API_KEY
 from auth_jwt import decode_token
 from routers import (
     adapters,
@@ -81,6 +82,18 @@ def _check_production_secrets() -> None:
         print(f"{border}\n", file=sys.stderr)
 
 
+async def _purge_expired_tokens_loop() -> None:
+    """Hourly purge of expired entries from the token revocation table."""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            removed = await database.purge_expired_revoked_tokens()
+            if removed:
+                print(f"[auth] Purged {removed} expired revoked token(s)")
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: check secrets before anything else
@@ -90,15 +103,17 @@ async def lifespan(app: FastAPI):
     # Restore persisted strategies and component states
     await load_strategies_from_db()
     await load_component_states()
-    # Start background alert monitor
+    # Start background tasks
     alert_task = asyncio.create_task(run_alert_monitor())
+    purge_task = asyncio.create_task(_purge_expired_tokens_loop())
     yield
     # Shutdown: cancel background tasks
-    alert_task.cancel()
-    try:
-        await alert_task
-    except asyncio.CancelledError:
-        pass
+    for task in (alert_task, purge_task):
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 # ── App factory ───────────────────────────────────────────────────────────────
@@ -121,8 +136,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 
 # API key auth (enabled when API_KEY env var is set)
@@ -208,16 +223,9 @@ async def jwt_middleware(request: Request, call_next):
     if path in _PUBLIC_PATHS or not path.startswith("/api/"):
         return await call_next(request)
 
-    # Only these specific auth sub-paths are public (login, logout, refresh)
-    # 2FA and other auth endpoints still require a valid token (enforced via Depends)
-    if path in _PUBLIC_PATHS:
-        return await call_next(request)
-
     # Skip JWT check when a valid API key is already provided (alternative auth)
-    from auth import API_KEY
-    import secrets as _secrets
     api_key_header = request.headers.get("X-API-Key", "")
-    if API_KEY and api_key_header and _secrets.compare_digest(api_key_header, API_KEY):
+    if API_KEY and api_key_header and secrets.compare_digest(api_key_header, API_KEY):
         return await call_next(request)
 
     # Check for valid Bearer token
@@ -236,9 +244,8 @@ async def jwt_middleware(request: Request, call_next):
             content={"detail": "Invalid or expired token"},
         )
 
-    # Check token blacklist (revoked via logout)
-    from routers.auth import is_token_revoked
-    if payload.get("jti") and is_token_revoked(payload["jti"]):
+    # Check persistent DB blacklist (survives restarts)
+    if payload.get("jti") and await database.is_token_revoked(payload["jti"]):
         return JSONResponse(
             status_code=401,
             content={"detail": "Token has been revoked"},
@@ -368,8 +375,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = ""):
         await websocket.close(code=4001, reason="Invalid or expired token")
         return
 
-    from routers.auth import is_token_revoked
-    if payload.get("jti") and is_token_revoked(payload["jti"]):
+    if payload.get("jti") and await database.is_token_revoked(payload["jti"]):
         await websocket.close(code=4001, reason="Token has been revoked")
         return
 

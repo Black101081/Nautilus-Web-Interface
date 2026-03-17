@@ -92,8 +92,13 @@ function App() {
     }
     // Decode JWT payload to check expiry (no library needed for exp check)
     try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      if (payload.exp && payload.exp * 1000 < Date.now()) {
+      const parts = token.split('.');
+      if (parts.length !== 3) throw new Error('Malformed token');
+      // JWT uses base64url encoding; atob needs standard base64
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const payload = JSON.parse(atob(base64));
+      const exp = typeof payload.exp === 'number' ? payload.exp : null;
+      if (exp !== null && exp * 1000 < Date.now()) {
         // Token expired — clear and show login
         localStorage.removeItem('nautilus_token');
         localStorage.removeItem('nautilus_role');
