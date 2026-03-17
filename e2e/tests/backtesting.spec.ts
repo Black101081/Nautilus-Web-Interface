@@ -7,6 +7,7 @@
  * - Concurrent backtest is rejected (lock)
  * - System info endpoint
  * - Engine info endpoint
+ * - Parameter sweep returns ranked results
  */
 
 import { test, expect } from "@playwright/test";
@@ -80,5 +81,51 @@ test.describe("Backtesting API", () => {
     const body = await r.json();
     expect(body).toHaveProperty("trader_id");
     expect(body).toHaveProperty("is_initialized");
+  });
+
+  test("parameter sweep returns ranked results", async ({ request }) => {
+    const r = await request.post(`${API}/api/nautilus/parameter-sweep`, {
+      data: {
+        fast_period_min: 5,
+        fast_period_max: 10,
+        fast_period_step: 5,
+        slow_period_min: 15,
+        slow_period_max: 25,
+        slow_period_step: 10,
+        starting_balance: 10_000,
+        num_bars: 100,
+      },
+      timeout: 60_000,
+    });
+    expect(r.status()).toBe(200);
+    const body = await r.json();
+    expect(body.success).toBe(true);
+    expect(Array.isArray(body.results)).toBe(true);
+    expect(body.results.length).toBeGreaterThan(0);
+    // Verify ranked by pnl descending
+    for (let i = 1; i < body.results.length; i++) {
+      expect(body.results[i - 1].total_pnl).toBeGreaterThanOrEqual(
+        body.results[i].total_pnl
+      );
+    }
+    // Best result matches first result
+    expect(body.best).toBeDefined();
+    expect(body.best.fast_period).toBeDefined();
+    expect(body.best.slow_period).toBeDefined();
+  });
+
+  test("parameter sweep with invalid range returns 400", async ({ request }) => {
+    const r = await request.post(`${API}/api/nautilus/parameter-sweep`, {
+      data: {
+        fast_period_min: 30,
+        fast_period_max: 30,
+        fast_period_step: 5,
+        slow_period_min: 10,
+        slow_period_max: 20,
+        slow_period_step: 5,
+        // All slow values < fast → no valid combos
+      },
+    });
+    expect(r.status()).toBe(400);
   });
 });
