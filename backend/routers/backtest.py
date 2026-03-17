@@ -119,6 +119,117 @@ async def run_demo_backtest(request: DemoBacktestRequest):
         _backtest_lock = False
 
 
+class ParameterSweepRequest(BaseModel):
+    fast_period_min: int = Field(5, ge=2, le=100)
+    fast_period_max: int = Field(20, ge=2, le=100)
+    fast_period_step: int = Field(5, ge=1, le=50)
+    slow_period_min: int = Field(15, ge=3, le=500)
+    slow_period_max: int = Field(50, ge=3, le=500)
+    slow_period_step: int = Field(10, ge=1, le=100)
+    starting_balance: float = Field(100_000.0, gt=0)
+    num_bars: int = Field(500, ge=10, le=5000)
+
+    @field_validator("fast_period_max")
+    @classmethod
+    def check_fast_range(cls, v: int, info) -> int:
+        if v < info.data.get("fast_period_min", v):
+            raise ValueError("fast_period_max must be >= fast_period_min")
+        return v
+
+    @field_validator("slow_period_max")
+    @classmethod
+    def check_slow_range(cls, v: int, info) -> int:
+        if v < info.data.get("slow_period_min", v):
+            raise ValueError("slow_period_max must be >= slow_period_min")
+        return v
+
+
+@router.post("/parameter-sweep")
+async def run_parameter_sweep(request: ParameterSweepRequest):
+    """
+    Run a grid search over SMA fast/slow period combinations.
+    Returns ranked results sorted by total P&L descending.
+    Max 25 combinations to keep response time reasonable.
+    """
+    global _backtest_lock
+    if _backtest_lock:
+        raise HTTPException(status_code=409, detail="A backtest is already running. Please wait.")
+
+    fast_range = list(range(
+        request.fast_period_min,
+        request.fast_period_max + 1,
+        request.fast_period_step,
+    ))
+    slow_range = list(range(
+        request.slow_period_min,
+        request.slow_period_max + 1,
+        request.slow_period_step,
+    ))
+
+    # Build all valid (fast, slow) pairs where slow > fast
+    combos = [
+        (f, s)
+        for f in fast_range
+        for s in slow_range
+        if s > f
+    ]
+
+    # Cap at 25 combinations to prevent timeout
+    MAX_COMBOS = 25
+    if len(combos) > MAX_COMBOS:
+        # Sample evenly from the list
+        step = len(combos) // MAX_COMBOS
+        combos = combos[::step][:MAX_COMBOS]
+
+    if not combos:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid combinations: slow_period must be > fast_period for all pairs.",
+        )
+
+    _backtest_lock = True
+    results = []
+    try:
+        for fast, slow in combos:
+            try:
+                r = nautilus_system.run_demo_backtest(
+                    fast_period=fast,
+                    slow_period=slow,
+                    starting_balance=request.starting_balance,
+                    num_bars=request.num_bars,
+                )
+                if r.get("success"):
+                    res = r.get("result", {})
+                    results.append({
+                        "fast_period": fast,
+                        "slow_period": slow,
+                        "total_pnl": round(res.get("total_pnl", 0.0), 2),
+                        "win_rate": round(res.get("win_rate", 0.0), 2),
+                        "total_trades": res.get("total_trades", 0),
+                        "ending_balance": round(res.get("ending_balance", request.starting_balance), 2),
+                        "max_drawdown": round(res.get("max_drawdown", 0.0), 2),
+                        "sharpe_ratio": round(res.get("sharpe_ratio", 0.0), 4) if res.get("sharpe_ratio") is not None else None,
+                    })
+            except Exception:
+                # Skip failed individual runs, continue sweep
+                continue
+    finally:
+        _backtest_lock = False
+
+    # Sort by total_pnl descending
+    results.sort(key=lambda x: x["total_pnl"], reverse=True)
+
+    return {
+        "success": True,
+        "combinations_tested": len(results),
+        "combinations_requested": len(combos),
+        "starting_balance": request.starting_balance,
+        "num_bars": request.num_bars,
+        "results": results,
+        "best": results[0] if results else None,
+    }
+
+
 @router.get("/system-info")
 async def get_system_info():
     return nautilus_system.get_system_info()
