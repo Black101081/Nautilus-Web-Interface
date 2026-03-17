@@ -3,10 +3,11 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 import database
+from auth_jwt import require_admin
 
 router = APIRouter(prefix="/api/database", tags=["database"])
 
@@ -27,7 +28,7 @@ class RestoreRequest(BaseModel):
 
 
 @router.post("/backup")
-async def backup_database(req: DatabaseOpRequest):
+async def backup_database(req: DatabaseOpRequest, _admin: dict = Depends(require_admin)):
     """Copy the SQLite database file to a timestamped backup."""
     db_path = Path(_DB_PATH)
     if not db_path.exists():
@@ -86,7 +87,7 @@ async def list_backups():
 
 
 @router.post("/restore")
-async def restore_database(req: RestoreRequest):
+async def restore_database(req: RestoreRequest, _admin: dict = Depends(require_admin)):
     """Restore the main database from a named backup file."""
     db_dir = Path(_DB_PATH).parent
     backup_path = db_dir / req.backup_file
@@ -127,7 +128,7 @@ async def restore_database(req: RestoreRequest):
 
 
 @router.post("/optimize")
-async def optimize_database(req: DatabaseOpRequest):
+async def optimize_database(req: DatabaseOpRequest, _admin: dict = Depends(require_admin)):
     """Run VACUUM + ANALYZE to reclaim space and update query planner stats."""
     db_path = Path(_DB_PATH)
     if not db_path.exists():
@@ -152,7 +153,7 @@ async def optimize_database(req: DatabaseOpRequest):
 
 
 @router.post("/clean")
-async def clean_cache(req: CacheOpRequest):
+async def clean_cache(req: CacheOpRequest, _admin: dict = Depends(require_admin)):
     """Delete triggered/cancelled records older than 30 days to reduce DB size."""
     db_path = Path(_DB_PATH)
     if not db_path.exists():

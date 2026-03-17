@@ -1,9 +1,10 @@
 from typing import Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import database
+from auth_jwt import get_current_user
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -22,7 +23,7 @@ async def list_alerts():
 
 
 @router.post("")
-async def create_alert(req: AlertCreateRequest):
+async def create_alert(req: AlertCreateRequest, _user: dict = Depends(get_current_user)):
     alert = await database.create_alert(
         symbol=req.symbol,
         condition=req.condition,
@@ -33,7 +34,7 @@ async def create_alert(req: AlertCreateRequest):
 
 
 @router.put("/{alert_id}/dismiss")
-async def dismiss_alert(alert_id: str):
+async def dismiss_alert(alert_id: str, _user: dict = Depends(get_current_user)):
     """Dismiss an active alert without deleting it."""
     updated = await database.dismiss_alert(alert_id)
     if not updated:
@@ -45,7 +46,7 @@ async def dismiss_alert(alert_id: str):
 
 
 @router.delete("/{alert_id}")
-async def delete_alert(alert_id: str):
+async def delete_alert(alert_id: str, _user: dict = Depends(get_current_user)):
     deleted = await database.delete_alert(alert_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")

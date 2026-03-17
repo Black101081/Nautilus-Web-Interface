@@ -3,9 +3,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 import httpx
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Depends
 
 import database
+from auth_jwt import get_current_user, require_admin
 from state import live_manager, nautilus_system
 from utils import normalize_order
 
@@ -93,7 +94,7 @@ async def get_engine_info():
 
 
 @router.post("/engine/initialize")
-async def initialize_system():
+async def initialize_system(_admin: dict = Depends(require_admin)):
     result = nautilus_system.initialize()
     if not result["success"]:
         from fastapi import HTTPException
@@ -102,7 +103,7 @@ async def initialize_system():
 
 
 @router.post("/engine/shutdown")
-async def shutdown_system():
+async def shutdown_system(_admin: dict = Depends(require_admin)):
     return {"success": True, "message": "Engine shutdown requested"}
 
 
@@ -157,7 +158,7 @@ async def get_settings():
 
 
 @router.post("/settings")
-async def save_settings(body: Dict[str, Any] = Body(...)):
+async def save_settings(body: Dict[str, Any] = Body(...), _admin: dict = Depends(require_admin)):
     settings = await database.update_settings(body)
     return {"success": True, "settings": settings}
 
@@ -203,7 +204,7 @@ async def list_trades(limit: int = 20):
 
 
 @router.post("/notifications/test-email")
-async def test_email(body: Dict[str, Any] = Body(...)):
+async def test_email(body: Dict[str, Any] = Body(...), _admin: dict = Depends(require_admin)):
     """Send a test email to verify SMTP configuration."""
     from notifications import EmailNotifier
     settings_data = await database.get_settings()
@@ -225,7 +226,7 @@ async def test_email(body: Dict[str, Any] = Body(...)):
 
 
 @router.post("/notifications/test-telegram")
-async def test_telegram(body: Dict[str, Any] = Body(...)):
+async def test_telegram(body: Dict[str, Any] = Body(...), _admin: dict = Depends(require_admin)):
     """Send a test Telegram message to verify bot configuration."""
     from notifications import TelegramNotifier
     bot_token = body.get("bot_token", "")

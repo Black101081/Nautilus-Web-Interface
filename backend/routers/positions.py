@@ -11,9 +11,10 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 import database
+from auth_jwt import get_current_user
 import market_data_service as svc
 from state import live_manager, nautilus_system
 
@@ -91,7 +92,7 @@ async def list_positions():
 
 
 @router.post("/positions/sync")
-async def sync_positions():
+async def sync_positions(_user: dict = Depends(get_current_user)):
     """Sync open positions from the connected exchange."""
     live_positions = await live_manager.sync_positions()
 
@@ -107,7 +108,7 @@ async def sync_positions():
 
 
 @router.post("/positions/{position_id}/close")
-async def close_position(position_id: str):
+async def close_position(position_id: str, _user: dict = Depends(get_current_user)):
     # If adapter connected, send a close order to the exchange
     if live_manager.is_connected():
         try:

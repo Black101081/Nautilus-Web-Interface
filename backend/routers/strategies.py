@@ -8,10 +8,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import database
+from auth_jwt import get_current_user
 import state as _state
 
 
@@ -153,7 +154,7 @@ async def nautilus_get_strategy(strategy_id: str):
 
 
 @router.post("/nautilus/strategies")
-async def nautilus_create_strategy(request: StrategyCreateRequest):
+async def nautilus_create_strategy(request: StrategyCreateRequest, _user: dict = Depends(get_current_user)):
     result = _nautilus().create_strategy(request.model_dump())
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
@@ -211,7 +212,7 @@ async def list_strategies():
 
 
 @router.post("/strategies")
-async def create_strategy(body: Dict[str, Any] = Body(...)):
+async def create_strategy(body: Dict[str, Any] = Body(...), _user: dict = Depends(get_current_user)):
     strategy_type = body.get("type", "sma_crossover")
     if strategy_type not in _STRATEGY_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown strategy type: {strategy_type}")
@@ -296,7 +297,7 @@ async def create_strategy(body: Dict[str, Any] = Body(...)):
 
 
 @router.delete("/strategies/{strategy_id}")
-async def delete_strategy(strategy_id: str):
+async def delete_strategy(strategy_id: str, _user: dict = Depends(get_current_user)):
     if not await _strategy_exists(strategy_id):
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
     sys = _nautilus()
@@ -318,7 +319,7 @@ async def _strategy_exists(strategy_id: str) -> bool:
 
 
 @router.post("/strategies/{strategy_id}/start")
-async def start_strategy(strategy_id: str):
+async def start_strategy(strategy_id: str, _user: dict = Depends(get_current_user)):
     if not await _strategy_exists(strategy_id):
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
     _nautilus().start_strategy(strategy_id)
@@ -331,7 +332,7 @@ async def start_strategy(strategy_id: str):
 
 
 @router.post("/strategies/{strategy_id}/stop")
-async def stop_strategy(strategy_id: str):
+async def stop_strategy(strategy_id: str, _user: dict = Depends(get_current_user)):
     if not await _strategy_exists(strategy_id):
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
     _nautilus().stop_strategy(strategy_id)

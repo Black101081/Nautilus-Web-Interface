@@ -7,10 +7,11 @@ This router tracks user-requested states in SQLite (persistent across
 restarts) and reflects the real engine state for read operations.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 import database
+from auth_jwt import require_admin
 from state import nautilus_system
 
 router = APIRouter(prefix="/api/component", tags=["components"])
@@ -79,7 +80,7 @@ class ComponentActionRequest(BaseModel):
 
 
 @router.post("/stop")
-async def stop_component(req: ComponentActionRequest):
+async def stop_component(req: ComponentActionRequest, _admin: dict = Depends(require_admin)):
     cid = req.component
     if cid not in _COMPONENT_DEFS:
         return {"success": False, "message": f"Unknown component '{cid}'"}
@@ -93,7 +94,7 @@ async def stop_component(req: ComponentActionRequest):
 
 
 @router.post("/start")
-async def start_component(req: ComponentActionRequest):
+async def start_component(req: ComponentActionRequest, _admin: dict = Depends(require_admin)):
     cid = req.component
     if cid not in _COMPONENT_DEFS:
         return {"success": False, "message": f"Unknown component '{cid}'"}
@@ -107,7 +108,7 @@ async def start_component(req: ComponentActionRequest):
 
 
 @router.post("/restart")
-async def restart_component(req: ComponentActionRequest):
+async def restart_component(req: ComponentActionRequest, _admin: dict = Depends(require_admin)):
     cid = req.component
     if cid not in _COMPONENT_DEFS:
         return {"success": False, "message": f"Unknown component '{cid}'"}
@@ -121,7 +122,7 @@ async def restart_component(req: ComponentActionRequest):
 
 
 @router.post("/configure")
-async def configure_component(req: ComponentActionRequest):
+async def configure_component(req: ComponentActionRequest, _admin: dict = Depends(require_admin)):
     cid = req.component
     if cid not in _COMPONENT_DEFS:
         return {"success": False, "message": f"Unknown component '{cid}'"}

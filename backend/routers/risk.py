@@ -1,8 +1,9 @@
 from typing import Any, Dict
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Depends
 
 import database
+from auth_jwt import require_admin
 from state import nautilus_system
 
 router = APIRouter(prefix="/api/risk", tags=["risk"])
@@ -14,7 +15,7 @@ async def get_risk_limits():
 
 
 @router.post("/limits")
-async def update_risk_limits(body: Dict[str, Any] = Body(...)):
+async def update_risk_limits(body: Dict[str, Any] = Body(...), _admin: dict = Depends(require_admin)):
     limits = await database.update_risk_limits(body)
     return {"success": True, "limits": limits}
 

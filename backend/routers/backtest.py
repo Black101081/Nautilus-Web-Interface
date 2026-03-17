@@ -1,9 +1,10 @@
 import re
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 import database
+from auth_jwt import get_current_user
 from state import nautilus_system, manager
 
 router = APIRouter(prefix="/api/nautilus", tags=["backtest"])
@@ -54,7 +55,7 @@ class DemoBacktestRequest(BaseModel):
 
 
 @router.post("/backtest")
-async def run_backtest(request: BacktestRequest):
+async def run_backtest(request: BacktestRequest, _user: dict = Depends(get_current_user)):
     global _backtest_lock
     if _backtest_lock:
         raise HTTPException(status_code=409, detail="A backtest is already running. Please wait.")
@@ -88,7 +89,7 @@ async def get_backtest_results(strategy_id: str):
 
 
 @router.post("/demo-backtest")
-async def run_demo_backtest(request: DemoBacktestRequest):
+async def run_demo_backtest(request: DemoBacktestRequest, _user: dict = Depends(get_current_user)):
     global _backtest_lock
     if _backtest_lock:
         raise HTTPException(status_code=409, detail="A backtest is already running. Please wait.")
@@ -145,7 +146,7 @@ class ParameterSweepRequest(BaseModel):
 
 
 @router.post("/parameter-sweep")
-async def run_parameter_sweep(request: ParameterSweepRequest):
+async def run_parameter_sweep(request: ParameterSweepRequest, _user: dict = Depends(get_current_user)):
     """
     Run a grid search over SMA fast/slow period combinations.
     Returns ranked results sorted by total P&L descending.
@@ -236,7 +237,7 @@ async def get_system_info():
 
 
 @router.post("/initialize")
-async def initialize_system():
+async def initialize_system(_user: dict = Depends(get_current_user)):
     result = nautilus_system.initialize()
     if not result["success"]:
         raise HTTPException(status_code=500, detail=result["message"])

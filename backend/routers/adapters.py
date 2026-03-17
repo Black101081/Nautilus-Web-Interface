@@ -11,10 +11,11 @@ status so the UI reflects the correct state across restarts.
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 import database
+from auth_jwt import require_admin
 from credential_utils import encrypt_credential, mask_credential
 from state import live_manager
 
@@ -173,7 +174,7 @@ async def get_adapter(adapter_id: str):
 
 
 @router.post("/adapters/{adapter_id}/connect")
-async def connect_adapter(adapter_id: str, req: AdapterConnectRequest):
+async def connect_adapter(adapter_id: str, req: AdapterConnectRequest, _admin: dict = Depends(require_admin)):
     """
     Validate credentials, encrypt, and connect adapter.
     For Binance: activates LiveTradingNode via live_manager.
@@ -265,7 +266,7 @@ async def connect_adapter(adapter_id: str, req: AdapterConnectRequest):
 
 
 @router.post("/adapters/{adapter_id}/disconnect")
-async def disconnect_adapter(adapter_id: str):
+async def disconnect_adapter(adapter_id: str, _admin: dict = Depends(require_admin)):
     if adapter_id not in _ADAPTER_BY_ID:
         raise HTTPException(status_code=404, detail=f"Adapter '{adapter_id}' not found")
 

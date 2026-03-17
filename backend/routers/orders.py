@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import database
+from auth_jwt import get_current_user
 from risk_engine import risk_engine, RiskCheckError
 from state import live_manager, nautilus_system
 from utils import normalize_order
@@ -38,7 +39,7 @@ async def list_orders():
 
 
 @router.post("/orders")
-async def create_order(req: OrderCreateRequest):
+async def create_order(req: OrderCreateRequest, _user: dict = Depends(get_current_user)):
     order_dict = req.model_dump()
 
     # 1. Risk check — runs before anything else
@@ -89,7 +90,7 @@ async def create_order(req: OrderCreateRequest):
 
 
 @router.delete("/orders/{order_id}")
-async def cancel_order(order_id: str):
+async def cancel_order(order_id: str, _user: dict = Depends(get_current_user)):
     # If adapter is connected, also cancel on exchange
     if live_manager.is_connected():
         try:

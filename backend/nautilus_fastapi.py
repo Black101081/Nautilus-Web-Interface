@@ -208,8 +208,9 @@ async def jwt_middleware(request: Request, call_next):
     if path in _PUBLIC_PATHS or not path.startswith("/api/"):
         return await call_next(request)
 
-    # Auth router sub-paths are public
-    if path.startswith("/api/auth/"):
+    # Only these specific auth sub-paths are public (login, logout, refresh)
+    # 2FA and other auth endpoints still require a valid token (enforced via Depends)
+    if path in _PUBLIC_PATHS:
         return await call_next(request)
 
     # Skip JWT check when a valid API key is already provided (alternative auth)
