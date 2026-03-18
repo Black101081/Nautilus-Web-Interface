@@ -18,6 +18,13 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setLoading(true);
     setError('');
 
+    // Validate 2FA code length before sending
+    if (requires2fa && totpCode.length !== 6) {
+      setError('Please enter a complete 6-digit code.');
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await fetch(`${API_CONFIG.NAUTILUS_API_URL}/api/auth/login`, {
         method: 'POST',

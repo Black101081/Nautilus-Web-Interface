@@ -84,6 +84,15 @@ function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
+    // Listen for 401 events dispatched by api.ts — triggers soft logout
+    const onUnauthorized = () => {
+      setAuthenticated(false);
+    };
+    window.addEventListener('nautilus:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('nautilus:unauthorized', onUnauthorized);
+  }, []);
+
+  useEffect(() => {
     // Check if stored token is still valid by verifying it hasn't expired
     const token = localStorage.getItem('nautilus_token');
     if (!token) {

@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -52,7 +52,6 @@ _WEAK_SECRET = "dev-secret-key-CHANGE-IN-PRODUCTION-min-32-chars"
 
 def _check_production_secrets() -> None:
     """Warn loudly if insecure default secrets are used."""
-    import sys
     secret_key = os.getenv("SECRET_KEY", _WEAK_SECRET)
     admin_pw = os.getenv("ADMIN_PASSWORD", "admin")
     env = os.getenv("ENVIRONMENT", "development").lower()

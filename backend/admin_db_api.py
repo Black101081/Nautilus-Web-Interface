@@ -236,6 +236,14 @@ def _init_db() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not ADMIN_API_KEY:
+        import sys
+        print(
+            "\n[SECURITY WARNING] ADMIN_API_KEY is not set — "
+            "admin_db_api is running WITHOUT authentication. "
+            "Set ADMIN_API_KEY env var before deploying.\n",
+            file=sys.stderr,
+        )
     _init_db()
     yield
 
@@ -246,8 +254,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Admin-Key"],
 )
 
 _ADMIN_PUBLIC = frozenset({"/api/admin/health", "/docs", "/redoc", "/openapi.json"})

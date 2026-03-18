@@ -7,10 +7,13 @@ Users are persisted in SQLite (users table) seeded at startup.
 """
 
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -18,6 +21,8 @@ from jose import JWTError, jwt
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-CHANGE-IN-PRODUCTION-min-32-chars")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "8"))
+
+_bearer = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
@@ -44,7 +49,6 @@ async def authenticate_user(username: str, password: str) -> Optional[dict]:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a signed JWT access token."""
-    import uuid
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
@@ -63,12 +67,6 @@ def decode_token(token: str) -> Optional[dict]:
 
 # ── FastAPI dependency helpers ────────────────────────────────────────────────
 
-from fastapi import Depends, HTTPException  # noqa: E402
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # noqa: E402
-
-_bearer = HTTPBearer(auto_error=False)
-
-
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
     """Dependency: verify JWT and return payload. Raises 401 on failure."""
     if not credentials:
@@ -79,13 +77,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_
     # Check persistent DB blacklist (survives restarts)
     jti = payload.get("jti")
     if jti:
-        import database as _db
-        if await _db.is_token_revoked(jti):
+        import database
+        if await database.is_token_revoked(jti):
             raise HTTPException(status_code=401, detail="Token has been revoked")
     return payload
 
 
-def require_admin(payload: dict = Depends(get_current_user)) -> dict:
+async def require_admin(payload: dict = Depends(get_current_user)) -> dict:
     """Dependency: verify JWT and require admin role. Raises 403 if not admin."""
     if payload.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")

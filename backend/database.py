@@ -4,6 +4,7 @@ Replaces the in-memory dicts that were lost on every server restart.
 """
 
 import json
+import os
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -193,7 +194,7 @@ async def init_db() -> None:
         await _seed_defaults(db)
 
     # Seed admin user outside the schema transaction (needs own connection)
-    admin_pw = __import__("os").getenv("ADMIN_PASSWORD", "admin")
+    admin_pw = os.getenv("ADMIN_PASSWORD", "admin")
     await seed_admin_user(admin_pw)
 
 

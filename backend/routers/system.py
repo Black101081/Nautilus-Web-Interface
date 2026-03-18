@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 import httpx
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 import database
 from auth_jwt import get_current_user, require_admin
@@ -97,7 +97,6 @@ async def get_engine_info():
 async def initialize_system(_admin: dict = Depends(require_admin)):
     result = nautilus_system.initialize()
     if not result["success"]:
-        from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=result["message"])
     return result
 

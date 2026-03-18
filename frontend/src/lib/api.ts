@@ -24,12 +24,12 @@ function getAuthHeaders(): Record<string, string> {
   return {};
 }
 
-/** Redirect to login by clearing stored auth and reloading */
+/** Clear session and dispatch event so App can transition to LoginPage without hard reload */
 function handleUnauthorized(): void {
   localStorage.removeItem('nautilus_token');
   localStorage.removeItem('nautilus_role');
-  // Force reload — App will detect missing token and show LoginPage
-  window.location.reload();
+  // Dispatch a custom event — App.tsx listens for this to trigger re-render
+  window.dispatchEvent(new CustomEvent('nautilus:unauthorized'));
 }
 
 async function request<T>(
