@@ -22,7 +22,8 @@ from fastapi.responses import JSONResponse
 sys.path.insert(0, str(Path(__file__).parent))
 
 import database
-from auth import ApiKeyMiddleware, API_KEY
+import auth as _auth_module
+from auth import ApiKeyMiddleware
 from auth_jwt import decode_token
 from routers import (
     adapters,
@@ -224,7 +225,7 @@ async def jwt_middleware(request: Request, call_next):
 
     # Skip JWT check when a valid API key is already provided (alternative auth)
     api_key_header = request.headers.get("X-API-Key", "")
-    if API_KEY and api_key_header and secrets.compare_digest(api_key_header, API_KEY):
+    if _auth_module.API_KEY and api_key_header and secrets.compare_digest(api_key_header, _auth_module.API_KEY):
         return await call_next(request)
 
     # Check for valid Bearer token

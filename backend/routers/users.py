@@ -8,10 +8,8 @@ Endpoints (admin-only):
   POST   /api/users/{user_id}/password — change a user's password
 """
 
-import re
-
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 import database
 from auth_jwt import hash_password, require_admin
@@ -19,19 +17,6 @@ from auth_jwt import hash_password, require_admin
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 _PASSWORD_MIN_LEN = 8
-_PASSWORD_RE = re.compile(
-    r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$"
-)
-
-
-def _validate_password_strength(password: str) -> str:
-    """Require: ≥8 chars, at least one uppercase, one lowercase, one digit."""
-    if not _PASSWORD_RE.match(password):
-        raise ValueError(
-            "Password must be at least 8 characters and contain "
-            "at least one uppercase letter, one lowercase letter, and one digit."
-        )
-    return password
 
 
 class CreateUserRequest(BaseModel):
@@ -39,19 +24,9 @@ class CreateUserRequest(BaseModel):
     password: str = Field(..., min_length=_PASSWORD_MIN_LEN)
     role: str = Field("trader", pattern="^(admin|trader)$")
 
-    @field_validator("password")
-    @classmethod
-    def check_password_strength(cls, v: str) -> str:
-        return _validate_password_strength(v)
-
 
 class ChangePasswordRequest(BaseModel):
     password: str = Field(..., min_length=_PASSWORD_MIN_LEN)
-
-    @field_validator("password")
-    @classmethod
-    def check_password_strength(cls, v: str) -> str:
-        return _validate_password_strength(v)
 
 
 @router.get("")
