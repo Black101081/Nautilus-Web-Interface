@@ -44,7 +44,7 @@ def _verify_totp(secret: str, code: str) -> bool:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/login")
-async def login(body: LoginRequest):
+async def login(body: LoginRequest, request: Request):
     """
     Authenticate and issue a JWT access token.
 
@@ -71,6 +71,12 @@ async def login(body: LoginRequest):
     expires = timedelta(minutes=int(session_minutes)) if session_minutes else None
 
     token = create_access_token({"sub": user["username"], "role": user["role"]}, expires_delta=expires)
+    await database.log_action(
+        action="login",
+        user_id=user["username"],
+        resource=f"user:{user['username']}",
+        ip_address=getattr(request, "client", None) and request.client.host or "",
+    )
     return {
         "access_token": token,
         "token_type": "bearer",

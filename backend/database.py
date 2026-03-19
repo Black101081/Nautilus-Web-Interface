@@ -885,6 +885,33 @@ async def log_action(
         await db.commit()
 
 
+async def get_audit_logs(
+    limit: int = 100,
+    offset: int = 0,
+    user_id: str = "",
+    action: str = "",
+) -> list:
+    """Return audit log entries, optionally filtered by user_id or action."""
+    conditions = []
+    params: list = []
+    if user_id:
+        conditions.append("user_id = ?")
+        params.append(user_id)
+    if action:
+        conditions.append("action = ?")
+        params.append(action)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params += [limit, offset]
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"SELECT * FROM audit_logs {where} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            params,
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
 # ── Token revocation (persistent blacklist) ───────────────────────────────────
 
 async def revoke_token(jti: str, expires_at: str) -> None:

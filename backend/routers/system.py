@@ -1,9 +1,12 @@
+import io
+import json
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 import database
 from auth_jwt import get_current_user, require_admin
@@ -265,3 +268,100 @@ async def list_instruments():
             {"id": "ETHUSDT.BINANCE","symbol": "ETHUSDT",  "venue": "BINANCE"},
         ]
     return {"instruments": instruments, "count": len(instruments)}
+
+
+# ── Audit Log ─────────────────────────────────────────────────────────────────
+
+@router.get("/admin/audit-logs")
+async def list_audit_logs(
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    user_id: str = Query(default=""),
+    action: str = Query(default=""),
+    _admin: dict = Depends(require_admin),
+):
+    """Return audit log entries (admin only). Append-only — no DELETE."""
+    logs = await database.get_audit_logs(limit=limit, offset=offset, user_id=user_id, action=action)
+    return {"logs": logs, "count": len(logs), "limit": limit, "offset": offset}
+
+
+# ── Performance Export ────────────────────────────────────────────────────────
+
+@router.get("/performance/export")
+async def export_performance(
+    format: str = Query(default="excel", pattern="^(excel|pdf)$"),
+    _user: dict = Depends(get_current_user),
+):
+    """Export trade performance as Excel or PDF."""
+    trades = await database.list_orders(limit=1000)
+
+    if format == "excel":
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Performance"
+        headers = ["ID", "Instrument", "Side", "Type", "Quantity", "Price", "Status", "Filled Qty", "PnL", "Timestamp"]
+        ws.append(headers)
+        for t in trades:
+            ws.append([
+                t.get("id", ""),
+                t.get("instrument", ""),
+                t.get("side", ""),
+                t.get("type", ""),
+                t.get("quantity", ""),
+                t.get("price", ""),
+                t.get("status", ""),
+                t.get("filled_qty", ""),
+                t.get("pnl", ""),
+                t.get("timestamp", ""),
+            ])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=performance.xlsx"},
+        )
+
+    elif format == "pdf":
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+        from reportlab.lib.styles import getSampleStyleSheet
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=landscape(A4))
+        styles = getSampleStyleSheet()
+        elements = [Paragraph("Nautilus — Performance Report", styles["Title"])]
+
+        headers = ["ID", "Instrument", "Side", "Qty", "Price", "Status", "PnL", "Timestamp"]
+        data = [headers]
+        for t in trades:
+            data.append([
+                t.get("id", ""),
+                t.get("instrument", ""),
+                t.get("side", ""),
+                str(t.get("quantity", "")),
+                str(t.get("price", "")),
+                t.get("status", ""),
+                str(t.get("pnl", "")),
+                t.get("timestamp", "")[:19] if t.get("timestamp") else "",
+            ])
+        table = Table(data, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a5f")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0f4f8")]),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=performance.pdf"},
+        )

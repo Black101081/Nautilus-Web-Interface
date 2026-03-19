@@ -83,6 +83,12 @@ async def create_order(req: OrderCreateRequest, _user: dict = Depends(get_curren
         quantity=req.quantity,
         price=req.price,
     )
+    await database.log_action(
+        action="order_created",
+        user_id=_user.get("sub", ""),
+        resource=f"order:{order['id']}",
+        details=f"instrument={req.instrument} side={req.side} qty={req.quantity} price={req.price}",
+    )
     result: Dict[str, Any] = {"success": True, "order": order}
     if exchange_order_id:
         result["exchange_order_id"] = exchange_order_id
@@ -102,6 +108,17 @@ async def cancel_order(order_id: str, _user: dict = Depends(get_current_user)):
     if not cancelled:
         # Still return success if connected (exchange order may not be in DB)
         if live_manager.is_connected():
+            await database.log_action(
+                action="order_cancelled",
+                user_id=_user.get("sub", ""),
+                resource=f"order:{order_id}",
+                details="cancel sent to exchange",
+            )
             return {"success": True, "message": f"Order {order_id} cancel sent to exchange"}
         raise HTTPException(status_code=404, detail=f"Order {order_id} not found or already closed")
+    await database.log_action(
+        action="order_cancelled",
+        user_id=_user.get("sub", ""),
+        resource=f"order:{order_id}",
+    )
     return {"success": True, "message": f"Order {order_id} cancelled"}
