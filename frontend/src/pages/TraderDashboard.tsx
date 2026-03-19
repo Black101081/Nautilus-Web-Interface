@@ -12,12 +12,28 @@ export default function TraderDashboard() {
   const [components, setComponents] = useState<any[]>([]);
   const [riskMetrics, setRiskMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  // Live counters from WebSocket (update every 3s without extra HTTP)
+  const [liveStrategiesCount, setLiveStrategiesCount] = useState<number | null>(null);
+  const [livePositionsCount, setLivePositionsCount] = useState<number | null>(null);
 
   useEffect(() => {
     loadDashboardData();
-    const interval = setInterval(loadDashboardData, 5000);
+    // Full refresh every 30s; WebSocket keeps counts fresh in between
+    const interval = setInterval(loadDashboardData, 30_000);
     return () => clearInterval(interval);
   }, []);
+
+  // Consume WebSocket live_data push
+  useEffect(() => {
+    if (lastMessage?.type === 'live_data') {
+      if (lastMessage.engine?.strategies_count !== undefined) {
+        setLiveStrategiesCount(lastMessage.engine.strategies_count);
+      }
+      if (lastMessage.open_positions_count !== undefined) {
+        setLivePositionsCount(lastMessage.open_positions_count);
+      }
+    }
+  }, [lastMessage]);
 
   const loadDashboardData = async () => {
     try {
@@ -96,7 +112,10 @@ export default function TraderDashboard() {
             <CardContent className="pt-6">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-blue-600">{engineInfo.strategies_count || 0}</div>
+                  <div className="text-2xl font-bold text-blue-600">
+                    {liveStrategiesCount ?? engineInfo.strategies_count ?? 0}
+                    {wsConnected && <span className="text-xs text-green-500 ml-1">●</span>}
+                  </div>
                   <div className="text-sm text-gray-600">Active Strategies</div>
                 </div>
                 <div className="text-center p-4 bg-gray-50 rounded-lg">
@@ -104,7 +123,10 @@ export default function TraderDashboard() {
                   <div className="text-sm text-gray-600">Components Online</div>
                 </div>
                 <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-purple-600">{riskMetrics?.position_count || 0}</div>
+                  <div className="text-2xl font-bold text-purple-600">
+                    {livePositionsCount ?? riskMetrics?.position_count ?? 0}
+                    {wsConnected && <span className="text-xs text-green-500 ml-1">●</span>}
+                  </div>
                   <div className="text-sm text-gray-600">Open Positions</div>
                 </div>
                 <div className="text-center p-4 bg-gray-50 rounded-lg">

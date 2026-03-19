@@ -1,6 +1,6 @@
 # Nautilus Web Interface
 
-> Professional admin interface for Nautilus Trader with FastAPI backend and React frontend
+> Professional trading interface for Nautilus Trader — FastAPI backend + React frontend
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -9,27 +9,32 @@
 
 ## Overview
 
-Nautilus Web Interface is a complete admin dashboard for [Nautilus Trader](https://nautilustrader.io/) - a high-performance algorithmic trading platform. This project provides a modern web interface to manage, monitor, and control Nautilus Trader instances.
+Nautilus Web Interface is a full-stack admin and trading dashboard for [Nautilus Trader](https://nautilustrader.io/) — a high-performance algorithmic trading platform. It provides a modern web UI to manage strategies, monitor positions, control risk, view live market data, and run backtests.
 
-### Features
+## Features
 
-- 🎯 **Complete Admin Interface** - 8 pages with 140+ operations
-- 🚀 **FastAPI Backend** - RESTful API with 15+ endpoints
-- ⚛️ **React Frontend** - Modern TypeScript UI with notifications
-- 🔄 **Real-time Integration** - Live data from Nautilus Trader core
-- 📊 **Component Management** - Control engines, adapters, and services
-- 💾 **Database Operations** - PostgreSQL, Parquet, Redis management
-- 🔔 **Notification System** - User feedback for all operations
-- 📱 **Responsive Design** - Works on desktop and mobile
+- **Trader Dashboard** — Strategies, orders, positions, risk, market data, alerts, backtesting, performance
+- **Admin Panel** — Engine components, adapters, system monitoring, database operations, settings
+- **Live Market Data** — Real prices from Binance public API (no API key needed) with 5s TTL cache and offline fallback
+- **Persistent Alerts** — SQLite-backed price alerts that survive server restarts
+- **Real-time WebSocket** — Live engine/position/risk updates pushed to the frontend
+- **API Key Auth** — Optional API key protection (set `API_KEY` env var to enable)
+- **Configurable CORS** — Strict origin allowlist via `CORS_ORIGINS` env var
+- **Cloudflare Pages Ready** — Frontend builds and deploys to Cloudflare Pages out of the box
 
 ## Architecture
 
 ```
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│   Frontend   │─────▶│   FastAPI    │─────▶│   Nautilus   │
-│  (React/TS)  │      │   Backend    │      │    Trader    │
-│              │◀─────│  (Python)    │◀─────│    Core      │
-└──────────────┘      └──────────────┘      └──────────────┘
+┌─────────────────────┐     HTTP/WS      ┌──────────────────────┐     Python
+│   React Frontend    │ ────────────────▶ │  nautilus_fastapi.py │ ──────────▶ NautilusTradingSystem
+│   (TypeScript/Vite) │ ◀──────────────── │  (production server) │            nautilus_core.py
+└─────────────────────┘                   └──────────────────────┘            nautilus_integration.py
+                                                     │
+                                          ┌──────────┴──────────┐
+                                          │  market_data_service │  ──▶ Binance API
+                                          │  alerts_db           │  ──▶ SQLite (backend/data/alerts.db)
+                                          │  auth                │  ──▶ API key middleware
+                                          └─────────────────────┘
 ```
 
 ## Quick Start
@@ -38,249 +43,281 @@ Nautilus Web Interface is a complete admin dashboard for [Nautilus Trader](https
 
 - Python 3.11+
 - Node.js 18+
-- 2GB RAM minimum
+- 2 GB RAM minimum
 
-### Installation
+### Backend
 
 ```bash
-# Clone repository
-git clone https://github.com/Black101081/Nautilus-Web-Interface.git
-cd Nautilus-Web-Interface
-
-# Install backend dependencies
-pip install nautilus_trader fastapi uvicorn
-
-# Start backend
 cd backend
-python3 nautilus_api.py
 
-# In another terminal, install frontend dependencies
+# Install dependencies
+pip install -r requirements.txt
+
+# Copy and edit environment file
+cp .env.example .env
+
+# Start server (production entry point)
+python3 nautilus_fastapi.py
+```
+
+Server starts at `http://localhost:8000`.
+Interactive API docs: `http://localhost:8000/docs`
+
+### Frontend
+
+```bash
 cd frontend
+
+# Install dependencies
 npm install
 
-# Start frontend
+# Copy and edit environment file
+cp .env.example .env
+
+# Development server
 npm run dev
 ```
 
-### Access
-
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
+Frontend starts at `http://localhost:5173`.
 
 ## Project Structure
 
 ```
 Nautilus-Web-Interface/
-├── backend/                 # FastAPI backend
-│   ├── nautilus_api.py     # Main API server
-│   └── nautilus_instance.py # Nautilus core setup
-├── frontend/               # React frontend
-│   ├── pages/             # Admin pages (8 pages)
-│   ├── services/          # API services
-│   ├── components/        # React components
-│   ├── contexts/          # React contexts
-│   └── utils/             # Utilities
-├── docs/                  # Documentation
-│   ├── NAUTILUS_ADMIN_COMPLETE.md
+├── backend/
+│   ├── nautilus_fastapi.py      # Production server (entry point)
+│   ├── nautilus_trader_api.py   # Secondary/reference API implementation
+│   ├── nautilus_core.py         # NautilusTradingSystem wrapper
+│   ├── nautilus_integration.py  # Nautilus manager (strategies, orders, etc.)
+│   ├── market_data_service.py   # Live Binance prices with TTL cache
+│   ├── alerts_db.py             # Async SQLite persistence for alerts
+│   ├── auth.py                  # API key middleware
+│   ├── admin_db_api.py          # Admin database API (port 8001)
+│   ├── nautilus_api.py          # Legacy stub (not used in production)
+│   ├── strategies/              # Strategy implementations
+│   ├── .env.example             # Environment variable template
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── pages/               # All UI pages (see below)
+│   │   ├── services/            # API client (nautilusService.ts)
+│   │   ├── lib/                 # api.ts, utils.ts
+│   │   ├── hooks/               # useWebSocket.ts
+│   │   └── App.tsx              # Router
+│   ├── .env.example             # Environment variable template
+│   └── package.json
+├── docs/
 │   ├── DEPLOYMENT_GUIDE.md
-│   └── test_integration.html
-└── README.md
+│   ├── CLOUDFLARE_PAGES_SETUP.md
+│   └── NAUTILUS_ADMIN_COMPLETE.md
+└── deploy_to_vps.sh             # Automated VPS deployment script
 ```
 
-## Admin Pages
+## Pages
 
-1. **Dashboard** - Overview and quick actions (16 operations)
-2. **Database** - PostgreSQL, Parquet, Redis management (15 operations)
-3. **Components** - Manage Nautilus components (22 operations)
-4. **Features** - Feature flags and configuration (20 operations)
-5. **Adapters** - Exchange/broker connections (19 operations)
-6. **Monitoring** - System metrics and logs (11 operations)
-7. **Settings** - System configuration (14 operations)
-8. **Component Showcase** - UI component demo (23 operations)
+### Trader Section (`/trader/*`)
+
+| Page | Route | Description |
+|------|-------|-------------|
+| Dashboard | `/trader` | Overview: engine status, active strategies, open positions, risk summary |
+| Strategies | `/trader/strategies` | Create, start, stop, and delete trading strategies |
+| Orders | `/trader/orders` | Place and cancel orders; filter by status |
+| Positions | `/trader/positions` | View and close open positions |
+| Risk | `/trader/risk` | Risk metrics and configurable limits |
+| Market Data | `/trader/market-data` | Live prices for BTC, ETH, BNB, SOL, ADA, DOT (Binance) |
+| Performance | `/trader/performance` | PnL summary, win rate, trade history |
+| Alerts | `/trader/alerts` | Price alerts (persisted in SQLite) |
+| Backtesting | `/trader/backtesting` | Run and review backtests |
+
+### Admin Section (`/admin/*`)
+
+| Page | Route | Description |
+|------|-------|-------------|
+| Dashboard | `/admin` | Quick actions and system overview |
+| Components | `/admin/components` | Manage Nautilus engine components |
+| Adapters | `/admin/adapters` | Exchange/broker adapter connections |
+| Monitoring | `/admin/monitoring` | CPU, memory, disk, uptime (via psutil) |
+| Settings | `/admin/settings` | System configuration |
+| Database | `/admin/database` | PostgreSQL, Parquet, Redis operations |
 
 ## API Endpoints
 
-### Health & Info
-- `GET /api/health` - Health check
-- `GET /api/nautilus/engine/info` - Engine information
-- `GET /api/nautilus/instruments` - List instruments
-- `GET /api/nautilus/cache/stats` - Cache statistics
+Production server: `nautilus_fastapi.py` on port 8000.
 
-### Database Operations
-- `POST /api/nautilus/database/optimize-postgresql`
-- `POST /api/nautilus/database/backup-postgresql`
-- `POST /api/nautilus/database/export-parquet`
-- `POST /api/nautilus/database/clean-parquet`
-- `POST /api/nautilus/database/flush-redis`
-- `GET /api/nautilus/database/redis-stats`
-
-### Component Management
-- `POST /api/nautilus/components/{id}/stop`
-- `POST /api/nautilus/components/{id}/restart`
-- `POST /api/nautilus/components/{id}/configure`
-
-## Development
-
-### Backend Development
-
-```bash
-cd backend
-
-# Run with auto-reload
-uvicorn nautilus_api:app --reload --port 8000
-
-# Run tests
-pytest tests/
+### Core
+```
+GET  /api/health
+POST /api/engine/initialize
+GET  /api/engine/info
+POST /api/engine/shutdown
 ```
 
-### Frontend Development
+### Trading
+```
+GET    /api/strategies
+POST   /api/strategies
+POST   /api/strategies/{id}/start
+POST   /api/strategies/{id}/stop
+DELETE /api/strategies/{id}
 
-```bash
-cd frontend
+GET    /api/orders
+POST   /api/orders
+DELETE /api/orders/{id}
 
-# Development server
-npm run dev
+GET  /api/positions
+POST /api/positions/{id}/close
 
-# Build for production
-npm run build
-
-# Preview production build
-npm run preview
-
-# Lint
-npm run lint
+GET  /api/trades
+GET  /api/account
 ```
 
-## Deployment
-
-See [DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) for detailed deployment instructions.
-
-### Quick Deploy to Cloudflare Pages
-
-```bash
-# Build frontend
-cd frontend
-npm run build
-
-# Deploy to Cloudflare Pages
-# (Connect your GitHub repo to Cloudflare Pages dashboard)
+### Risk
+```
+GET  /api/risk/metrics
+GET  /api/risk/limits
+POST /api/risk/limits
 ```
 
-### Docker Deployment
+### Market Data (live — Binance)
+```
+GET /api/market-data/instruments   # BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, ADAUSDT, DOTUSDT
+GET /api/market-data/{symbol}      # Single symbol ticker
+```
 
-```bash
-# Build backend image
-docker build -t nautilus-backend ./backend
+### Alerts (SQLite-persisted)
+```
+GET    /api/alerts
+POST   /api/alerts
+DELETE /api/alerts/{id}
+```
 
-# Run backend
-docker run -d -p 8000:8000 nautilus-backend
+### System & Admin
+```
+GET  /api/system/metrics           # CPU, memory, disk, uptime
+GET  /api/performance/summary
+GET  /api/settings
+POST /api/settings
+POST /api/database/backup
+POST /api/database/optimize
+POST /api/database/clean
+```
 
-# Build frontend image
-docker build -t nautilus-frontend ./frontend
+### Backtesting
+```
+POST /api/nautilus/demo-backtest
+POST /api/nautilus/backtest
+```
 
-# Run frontend
-docker run -d -p 3000:3000 nautilus-frontend
+### WebSocket
+```
+WS /ws    # Real-time engine/strategy/position/risk updates (2s interval)
 ```
 
 ## Configuration
 
-### Backend
+### Backend — `backend/.env`
 
-Environment variables (optional):
-- `NAUTILUS_LOG_LEVEL` - Log level (default: INFO)
-- `NAUTILUS_PORT` - API port (default: 8000)
-
-### Frontend
-
-Create `.env` in frontend directory:
 ```env
-VITE_API_URL=http://localhost:8000
+# Allowed CORS origins (comma-separated). Defaults to localhost:5173 + :3000.
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+
+# API key for all endpoints. Leave blank to disable auth (dev only).
+# Generate: openssl rand -hex 32
+API_KEY=
+
+# Server port (default: 8000)
+NAUTILUS_API_PORT=8000
 ```
 
-## Testing
+### Frontend — `frontend/.env`
 
-### Integration Test
+```env
+# Backend API base URL
+VITE_NAUTILUS_API_URL=http://localhost:8000
 
-Open `docs/test_integration.html` in browser to test API integration.
+# Admin DB API base URL
+VITE_ADMIN_DB_API_URL=http://localhost:8001
 
-### Manual Testing
+# WebSocket URL
+VITE_WS_URL=ws://localhost:8000
+
+# API key (must match server API_KEY if set)
+VITE_API_KEY=
+```
+
+## Deployment
+
+See [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) for full VPS / Docker / systemd instructions.
+
+See [docs/CLOUDFLARE_PAGES_SETUP.md](docs/CLOUDFLARE_PAGES_SETUP.md) for Cloudflare Pages frontend deployment.
+
+A fully automated deployment script is also available:
 
 ```bash
-# Test health endpoint
-curl http://localhost:8000/api/health
-
-# Test engine info
-curl http://localhost:8000/api/nautilus/engine/info
-
-# Test database operation
-curl -X POST http://localhost:8000/api/nautilus/database/optimize-postgresql
+DOMAIN=yourdomain.com bash deploy_to_vps.sh
 ```
-
-## Documentation
-
-- [Complete System Documentation](docs/NAUTILUS_ADMIN_COMPLETE.md)
-- [Deployment Guide](docs/DEPLOYMENT_GUIDE.md)
-- [Frontend README](frontend/README.md)
-- [API Documentation](http://localhost:8000/docs) (when running)
 
 ## Technology Stack
 
 ### Backend
-- **Nautilus Trader** - Core trading engine
-- **FastAPI** - Modern Python web framework
-- **Uvicorn** - ASGI server
-- **Pydantic** - Data validation
+| Package | Purpose |
+|---------|---------|
+| `nautilus_trader>=1.220.0` | Core trading engine |
+| `fastapi>=0.104.0` | REST API framework |
+| `uvicorn[standard]>=0.24.0` | ASGI server |
+| `pydantic>=2.4.0` | Data validation |
+| `httpx>=0.27.0` | Async HTTP client (Binance API) |
+| `aiosqlite>=0.20.0` | Async SQLite (alerts persistence) |
+| `psutil>=5.9.0` | System metrics (monitoring page) |
+| `python-multipart>=0.0.6` | File upload support |
 
 ### Frontend
-- **React 18** - UI library
-- **TypeScript** - Type safety
-- **Vite** - Build tool
-- **Tailwind CSS** - Styling
-- **Lucide React** - Icons
+| Package | Purpose |
+|---------|---------|
+| React 18 + TypeScript | UI framework |
+| Vite | Build tool |
+| Tailwind CSS + Radix UI | Styling and components |
+| Recharts | Charts and analytics |
+| TanStack Query | Server state management |
+| Wouter | Client-side routing |
+| Framer Motion | Animations |
+
+## Development
+
+```bash
+# Backend — auto-reload
+cd backend
+uvicorn nautilus_fastapi:app --reload --port 8000
+
+# Frontend — dev server
+cd frontend
+npm run dev
+
+# Frontend — production build
+npm run build
+
+# Frontend — lint
+npm run lint
+```
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
+2. Create your feature branch: `git checkout -b feature/my-feature`
+3. Commit your changes: `git commit -m 'feat: add my feature'`
+4. Push to the branch: `git push origin feature/my-feature`
 5. Open a Pull Request
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- [Nautilus Trader](https://nautilustrader.io/) - The core trading platform
-- [FastAPI](https://fastapi.tiangolo.com/) - The backend framework
-- [React](https://reactjs.org/) - The frontend library
-
-## Support
-
-For issues, questions, or contributions:
-- 📧 Open an issue on GitHub
-- 📖 Check the [documentation](docs/)
-- 🔍 Review the [integration test](docs/test_integration.html)
-
-## Roadmap
-
-- [ ] WebSocket support for real-time updates
-- [ ] Authentication and authorization
-- [ ] Strategy management interface
-- [ ] Backtesting UI
-- [ ] Advanced analytics dashboard
-- [ ] Mobile app
-- [ ] Multi-instance support
+- [Nautilus Trader](https://nautilustrader.io/) — Core trading engine
+- [FastAPI](https://fastapi.tiangolo.com/) — Backend framework
+- [Binance API](https://binance-docs.github.io/apidocs/) — Live market data
 
 ---
 
-**Built with ❤️ for the Nautilus Trader community**
-
-**Version**: 1.0.0  
-**Status**: Production Ready  
-**Last Updated**: October 2025
-
+**Version**: 2.0.0 | **Status**: Production Ready | **Last Updated**: March 2026

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../lib/api';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 interface Order {
   id: string;
@@ -16,6 +17,8 @@ interface Order {
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [orderError, setOrderError] = useState<string | null>(null);
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
   const [newOrder, setNewOrder] = useState({
     instrument: 'BTCUSDT',
@@ -24,32 +27,48 @@ export default function OrdersPage() {
     quantity: 0.001,
     price: 0
   });
+  const { lastMessage } = useWebSocket();
+  const prevMessageRef = useRef(lastMessage);
 
   useEffect(() => {
     fetchOrders();
-    const interval = setInterval(fetchOrders, 5000); // Refresh every 5s
-    return () => clearInterval(interval);
   }, []);
+
+  // Refresh on live_data WebSocket push instead of polling
+  useEffect(() => {
+    if (lastMessage && lastMessage !== prevMessageRef.current) {
+      prevMessageRef.current = lastMessage;
+      if (lastMessage.type === 'live_data') {
+        fetchOrders();
+      }
+    }
+  }, [lastMessage]);
 
   const fetchOrders = async () => {
     try {
       const data = await api.get<{ orders: Order[] }>('/api/orders');
       setOrders(data.orders || []);
+      setFetchError(null);
     } catch (error) {
-      console.error('Failed to fetch orders:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to load orders');
     } finally {
       setLoading(false);
     }
   };
 
   const handleCreateOrder = async () => {
+    if (newOrder.quantity <= 0) {
+      setOrderError('Quantity must be greater than 0');
+      return;
+    }
+    setOrderError(null);
     try {
       await api.post('/api/orders', newOrder);
       setShowNewOrderModal(false);
       setNewOrder({ instrument: 'BTCUSDT', side: 'BUY', type: 'LIMIT', quantity: 0.001, price: 0 });
       fetchOrders();
     } catch (error) {
-      console.error('Failed to create order:', error);
+      setOrderError(error instanceof Error ? error.message : 'Failed to create order');
     }
   };
 
@@ -59,7 +78,7 @@ export default function OrdersPage() {
       await api.delete(`/api/orders/${orderId}`);
       fetchOrders();
     } catch (error) {
-      console.error('Failed to cancel order:', error);
+      setFetchError(error instanceof Error ? error.message : 'Failed to cancel order');
     }
   };
 
@@ -88,6 +107,11 @@ export default function OrdersPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
       <div className="max-w-7xl mx-auto">
+        {fetchError && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+            {fetchError}
+          </div>
+        )}
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
@@ -249,9 +273,14 @@ export default function OrdersPage() {
                 )}
               </div>
 
+              {orderError && (
+                <div className="mt-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">
+                  {orderError}
+                </div>
+              )}
               <div className="flex gap-4 mt-6">
                 <button
-                  onClick={() => setShowNewOrderModal(false)}
+                  onClick={() => { setShowNewOrderModal(false); setOrderError(null); }}
                   className="flex-1 px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold"
                 >
                   Cancel

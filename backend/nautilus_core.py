@@ -4,11 +4,14 @@ Real integration with Nautilus Trader engine - NOT MOCK DATA
 Uses low-level BacktestEngine API for direct control
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.config import LoggingConfig
@@ -18,8 +21,9 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.model.enums import AccountType, OmsType
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-# Import our real strategy
+# Import our real strategies
 from strategies.sma_crossover import SMACrossoverStrategy, SMACrossoverConfig
+from strategies.rsi_strategy import RSIStrategy, RSIStrategyConfig
 
 
 class NautilusTradingSystem:
@@ -60,12 +64,12 @@ class NautilusTradingSystem:
                 self.catalog = ParquetDataCatalog(self.catalog_path)
                 self.instruments = self.catalog.instruments()
                 
-                print(f"✅ Loaded catalog from {self.catalog_path}")
-                print(f"📊 Available instruments: {len(self.instruments)}")
+                logger.info("Loaded catalog from %s", self.catalog_path)
+                logger.info("Available instruments: %d", len(self.instruments))
                 for instrument in self.instruments:
-                    print(f"   - {instrument.id}")
+                    logger.info("  - %s", instrument.id)
             else:
-                print(f"⚠️  Catalog path not found: {self.catalog_path}")
+                logger.warning("Catalog path not found: %s", self.catalog_path)
                 return {
                     "success": False,
                     "message": f"Data catalog not found at {self.catalog_path}"
@@ -100,6 +104,20 @@ class NautilusTradingSystem:
             "backtests_count": len(self.backtest_results)
         }
     
+    def start_strategy(self, strategy_id: str) -> bool:
+        """Mark strategy as running. Called by the strategies router on start."""
+        if strategy_id in self.strategies:
+            self.strategies[strategy_id]["status"] = "running"
+            return True
+        return False
+
+    def stop_strategy(self, strategy_id: str) -> bool:
+        """Mark strategy as stopped. Called by the strategies router on stop."""
+        if strategy_id in self.strategies:
+            self.strategies[strategy_id]["status"] = "stopped"
+            return True
+        return False
+
     def create_strategy(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Create a real Nautilus strategy.
@@ -112,37 +130,75 @@ class NautilusTradingSystem:
             strategy_type = config.get("type", "sma_crossover")
             
             if strategy_type == "sma_crossover":
-                # Create real SMA Crossover strategy config
                 strategy_config = SMACrossoverConfig(
                     strategy_id=strategy_id,
                     instrument_id=config.get("instrument_id", "EUR/USD.SIM"),
                     bar_type=config.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
                     fast_period=config.get("fast_period", 10),
                     slow_period=config.get("slow_period", 20),
-                    trade_size=Decimal(str(config.get("trade_size", "100000")))
+                    trade_size=Decimal(str(config.get("trade_size", "100000"))),
                 )
-                
-                # Store strategy info
+                name = config.get("name", "SMA Crossover")
+            elif strategy_type == "rsi":
+                strategy_config = RSIStrategyConfig(
+                    strategy_id=strategy_id,
+                    instrument_id=config.get("instrument_id", "EUR/USD.SIM"),
+                    bar_type=config.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
+                    rsi_period=config.get("rsi_period", 14),
+                    oversold_level=config.get("oversold_level", 30.0),
+                    overbought_level=config.get("overbought_level", 70.0),
+                    trade_size=Decimal(str(config.get("trade_size", "100000"))),
+                )
+                name = config.get("name", "RSI Mean-Reversion")
+            elif strategy_type == "macd":
+                fast = int(config.get("fast_period", 12))
+                slow = int(config.get("slow_period", 26))
+                signal = int(config.get("signal_period", 9))
+                name = config.get("name", "MACD Crossover")
+                # MACD doesn't map to a Nautilus engine config — stored as plain dict
                 self.strategies[strategy_id] = {
                     "id": strategy_id,
-                    "name": config.get("name", "SMA Crossover"),
+                    "name": name,
                     "type": strategy_type,
-                    "config": strategy_config,
+                    "config": {
+                        "fast_period": fast,
+                        "slow_period": slow,
+                        "signal_period": signal,
+                        "instrument_id": config.get("instrument_id", "EUR/USD.SIM"),
+                        "bar_type": config.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
+                        "trade_size": str(config.get("trade_size", "100000")),
+                    },
                     "status": "created",
-                    "created_at": datetime.now(timezone.utc).isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                 }
-                
                 return {
                     "success": True,
                     "message": f"Strategy {strategy_id} created",
                     "strategy_id": strategy_id,
-                    "type": strategy_type
+                    "type": strategy_type,
                 }
             else:
                 return {
                     "success": False,
-                    "message": f"Unknown strategy type: {strategy_type}"
+                    "message": f"Unknown strategy type: {strategy_type}",
                 }
+
+            # Store strategy info
+            self.strategies[strategy_id] = {
+                "id": strategy_id,
+                "name": name,
+                "type": strategy_type,
+                "config": strategy_config,
+                "status": "created",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            return {
+                "success": True,
+                "message": f"Strategy {strategy_id} created",
+                "strategy_id": strategy_id,
+                "type": strategy_type,
+            }
                 
         except Exception as e:
             import traceback
@@ -184,19 +240,33 @@ class NautilusTradingSystem:
             
             strategy_info = self.strategies[strategy_id]
             strategy_config = strategy_info["config"]
-            
-            print(f"🚀 Starting backtest for {strategy_id}")
-            print(f"📅 Period: {start_date} to {end_date}")
-            print(f"💰 Starting balance: ${starting_balance:,.2f}")
-            
+            strategy_type = strategy_info["type"]
+
+            # MACD has no real BacktestEngine implementation — return early
+            if strategy_type == "macd":
+                return {
+                    "success": False,
+                    "message": "MACD backtest is not yet supported in the engine",
+                }
+
+            # Resolve instrument_id safely for both config objects and plain dicts
+            if isinstance(strategy_config, dict):
+                cfg_instrument_id = strategy_config.get("instrument_id", "EUR/USD.SIM")
+            else:
+                cfg_instrument_id = strategy_config.instrument_id
+
+            logger.info("Starting backtest for %s", strategy_id)
+            logger.info("Period: %s to %s", start_date, end_date)
+            logger.info("Starting balance: $%.2f", starting_balance)
+
             # Create BacktestEngine with configuration
             engine_config = BacktestEngineConfig(
                 trader_id=self.trader_id,
                 logging=LoggingConfig(log_level="INFO"),
             )
-            
+
             engine = BacktestEngine(config=engine_config)
-            
+
             # Add venue (simulated exchange)
             VENUE = Venue("SIM")
             engine.add_venue(
@@ -206,25 +276,25 @@ class NautilusTradingSystem:
                 base_currency=USD,
                 starting_balances=[Money(starting_balance, USD)],
             )
-            
+
             # Get instrument from catalog
             instrument = None
             for instr in self.instruments:
-                if str(instr.id) == strategy_config.instrument_id:
+                if str(instr.id) == cfg_instrument_id:
                     instrument = instr
                     break
-            
+
             if not instrument:
                 return {
                     "success": False,
-                    "message": f"Instrument {strategy_config.instrument_id} not found in catalog"
+                    "message": f"Instrument {cfg_instrument_id} not found in catalog"
                 }
             
             # Add instrument
             engine.add_instrument(instrument)
             
             # Load quote tick data from catalog
-            print(f"📥 Loading quote tick data for {instrument.id}...")
+            logger.info("Loading quote tick data for %s...", instrument.id)
             quote_ticks = self.catalog.quote_ticks(
                 instrument_ids=[str(instrument.id)],
                 start=start_date,
@@ -237,20 +307,23 @@ class NautilusTradingSystem:
                     "message": f"No quote tick data found for {instrument.id} between {start_date} and {end_date}"
                 }
             
-            print(f"✅ Loaded {len(quote_ticks)} quote ticks")
+            logger.info("Loaded %d quote ticks", len(quote_ticks))
             
             # Add data to engine
             engine.add_data(quote_ticks)
             
-            # Create and add strategy
-            strategy = SMACrossoverStrategy(config=strategy_config)
+            # Create and add strategy (dispatch by type)
+            if strategy_info["type"] == "rsi":
+                strategy = RSIStrategy(config=strategy_config)
+            else:
+                strategy = SMACrossoverStrategy(config=strategy_config)
             engine.add_strategy(strategy=strategy)
             
             # Run backtest
-            print("⚙️  Running backtest...")
+            logger.info("Running backtest...")
             engine.run()
             
-            print("✅ Backtest completed!")
+            logger.info("Backtest completed")
             
             # Extract results from engine
             # Get account
@@ -311,31 +384,34 @@ class NautilusTradingSystem:
             self.strategies[strategy_id]["status"] = "backtested"
             self.strategies[strategy_id]["last_backtest"] = datetime.now(timezone.utc).isoformat()
             
-            print(f"📈 Total P&L: ${total_pnl:,.2f}")
-            print(f"📊 Total Trades: {total_trades}")
-            print(f"🎯 Win Rate: {win_rate:.2f}%")
-            
-            # Clean up
-            engine.dispose()
+            logger.info("Total PnL: $%.2f", total_pnl)
+            logger.info("Total Trades: %d", total_trades)
+            logger.info("Win Rate: %.2f%%", win_rate)
             
             return {
                 "success": True,
                 "message": "Backtest completed successfully",
                 "result": backtest_result
             }
-            
+
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            print(f"❌ Backtest failed: {str(e)}")
-            print(error_trace)
-            
+            logger.error("Backtest failed: %s", e)
+            logger.debug(error_trace)
+
             return {
                 "success": False,
                 "message": f"Backtest failed: {str(e)}",
                 "error": str(e),
                 "trace": error_trace
             }
+        finally:
+            # Always dispose engine to release resources, regardless of success/failure
+            try:
+                engine.dispose()
+            except Exception:
+                pass  # engine may not have been created if error was early
     
     def get_backtest_results(self, strategy_id: str) -> Optional[Dict[str, Any]]:
         """Get backtest results for a strategy."""
@@ -359,7 +435,7 @@ class NautilusTradingSystem:
             running += pnl
             ts_secs = (pos.ts_closed or 0) / 1e9
             try:
-                time_str = datetime.utcfromtimestamp(ts_secs).isoformat()
+                time_str = datetime.fromtimestamp(ts_secs, tz=timezone.utc).isoformat()
             except Exception:
                 time_str = datetime.now(timezone.utc).isoformat()
             equity_curve.append({"time": time_str, "equity": round(running, 2)})
@@ -481,9 +557,9 @@ class NautilusTradingSystem:
             strategy = SMACrossoverStrategy(config=strategy_config)
             engine.add_strategy(strategy=strategy)
 
-            print(f"⚙️  Running demo backtest ({num_bars} bars, fast={fast_period}, slow={slow_period})…")
+            logger.info("Running demo backtest (%d bars, fast=%d, slow=%d)...", num_bars, fast_period, slow_period)
             engine.run()
-            print("✅ Demo backtest complete")
+            logger.info("Demo backtest complete")
 
             accounts = list(engine.cache.accounts())
             account = accounts[0] if accounts else None
@@ -533,8 +609,8 @@ class NautilusTradingSystem:
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            print(f"❌ Demo backtest failed: {e}")
-            print(error_trace)
+            logger.error("Demo backtest failed: %s", e)
+            logger.debug(error_trace)
             return {
                 "success": False,
                 "message": str(e),

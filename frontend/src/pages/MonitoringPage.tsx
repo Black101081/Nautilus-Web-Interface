@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNotification } from "@/contexts/NotificationContext";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import api from "@/lib/api";
 
 interface SystemMetrics {
@@ -13,8 +14,8 @@ interface SystemMetrics {
   disk_total_gb: number;
   disk_percent: number;
   uptime_seconds: number;
-  request_count: number;
-  active_connections: number;
+  requests_total: number;
+  active_connections?: number;
 }
 
 function formatUptime(seconds: number): string {
@@ -28,8 +29,11 @@ function formatUptime(seconds: number): string {
 
 export default function MonitoringPage() {
   const { success, error: notifyError } = useNotification();
+  const { connected: wsConnected, lastMessage } = useWebSocket();
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  // Live CPU/memory overlay from WebSocket (updates every 3s without extra HTTP call)
+  const [wsMetrics, setWsMetrics] = useState<{ cpu_percent?: number; memory_percent?: number } | null>(null);
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -44,9 +48,20 @@ export default function MonitoringPage() {
 
   useEffect(() => {
     fetchMetrics();
-    const interval = setInterval(fetchMetrics, 5000);
+    // Full refresh every 30s; WS provides lightweight CPU/mem overlay in between
+    const interval = setInterval(fetchMetrics, 30_000);
     return () => clearInterval(interval);
   }, [fetchMetrics]);
+
+  // Update CPU/memory from WebSocket live_data push (every 3s)
+  useEffect(() => {
+    if (lastMessage?.type === "live_data" && lastMessage.metrics) {
+      setWsMetrics(lastMessage.metrics);
+    }
+  }, [lastMessage]);
+
+  const cpu = wsMetrics?.cpu_percent ?? metrics?.cpu_percent ?? 0;
+  const mem = wsMetrics?.memory_percent ?? metrics?.memory_percent ?? 0;
 
   const cpuColor = (v: number) => v > 80 ? "text-red-600" : v > 60 ? "text-yellow-600" : "text-green-600";
   const memColor = (v: number) => v > 85 ? "text-red-600" : v > 70 ? "text-yellow-600" : "text-blue-600";
@@ -59,7 +74,13 @@ export default function MonitoringPage() {
             <div>
               <h1 className="text-2xl font-bold">System Monitoring</h1>
               <p className="text-sm text-gray-500 mt-0.5">
-                {loading ? "Loading…" : "Live metrics · auto-refresh every 5s"}
+                {loading ? "Loading…" : (
+                  <>
+                    CPU/Mem live via WebSocket
+                    <span className={`ml-2 inline-block w-2 h-2 rounded-full ${wsConnected ? "bg-green-500" : "bg-red-400"}`} />
+                    {wsConnected ? " Connected" : " Disconnected — reconnecting…"}
+                  </>
+                )}
               </p>
             </div>
             <div className="flex gap-2">
@@ -77,50 +98,46 @@ export default function MonitoringPage() {
         <div className="grid md:grid-cols-4 gap-6 mb-6">
           <Card>
             <CardHeader className="pb-3">
-              <CardDescription>CPU Usage</CardDescription>
-              <CardTitle className={`text-3xl ${metrics ? cpuColor(metrics.cpu_percent) : ""}`}>
-                {loading ? "—" : `${metrics?.cpu_percent.toFixed(1)}%`}
+              <CardDescription>CPU Usage {wsConnected && <span className="text-xs text-green-600">● live</span>}</CardDescription>
+              <CardTitle className={`text-3xl ${cpuColor(cpu)}`}>
+                {loading ? "—" : `${cpu.toFixed(1)}%`}
               </CardTitle>
             </CardHeader>
-            {metrics && (
-              <CardContent className="pt-0">
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className={`h-2 rounded-full transition-all ${metrics.cpu_percent > 80 ? "bg-red-500" : metrics.cpu_percent > 60 ? "bg-yellow-500" : "bg-green-500"}`}
-                    style={{ width: `${metrics.cpu_percent}%` }}
-                  />
-                </div>
-              </CardContent>
-            )}
+            <CardContent className="pt-0">
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className={`h-2 rounded-full transition-all ${cpu > 80 ? "bg-red-500" : cpu > 60 ? "bg-yellow-500" : "bg-green-500"}`}
+                  style={{ width: `${Math.min(cpu, 100)}%` }}
+                />
+              </div>
+            </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-3">
-              <CardDescription>Memory</CardDescription>
-              <CardTitle className={`text-3xl ${metrics ? memColor(metrics.memory_percent) : ""}`}>
-                {loading ? "—" : `${metrics?.memory_used_gb.toFixed(1)}GB`}
+              <CardDescription>Memory {wsConnected && <span className="text-xs text-green-600">● live</span>}</CardDescription>
+              <CardTitle className={`text-3xl ${memColor(mem)}`}>
+                {loading ? "—" : `${metrics?.memory_used_gb?.toFixed(1) ?? "—"}GB`}
               </CardTitle>
             </CardHeader>
-            {metrics && (
-              <CardContent className="pt-0">
-                <p className="text-xs text-gray-500 mb-1">
-                  {metrics.memory_percent.toFixed(1)}% of {metrics.memory_total_gb.toFixed(1)}GB
-                </p>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className={`h-2 rounded-full transition-all ${metrics.memory_percent > 85 ? "bg-red-500" : metrics.memory_percent > 70 ? "bg-yellow-500" : "bg-blue-500"}`}
-                    style={{ width: `${metrics.memory_percent}%` }}
-                  />
-                </div>
-              </CardContent>
-            )}
+            <CardContent className="pt-0">
+              <p className="text-xs text-gray-500 mb-1">
+                {mem.toFixed(1)}% of {metrics?.memory_total_gb?.toFixed(1) ?? "—"}GB
+              </p>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className={`h-2 rounded-full transition-all ${mem > 85 ? "bg-red-500" : mem > 70 ? "bg-yellow-500" : "bg-blue-500"}`}
+                  style={{ width: `${Math.min(mem, 100)}%` }}
+                />
+              </div>
+            </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-3">
               <CardDescription>Disk</CardDescription>
               <CardTitle className="text-3xl text-gray-800">
-                {loading ? "—" : `${metrics?.disk_used_gb.toFixed(0)}GB`}
+                {loading ? "—" : `${metrics?.disk_used_gb?.toFixed(0) ?? "—"}GB`}
               </CardTitle>
             </CardHeader>
             {metrics && (
@@ -148,10 +165,7 @@ export default function MonitoringPage() {
             {metrics && (
               <CardContent className="pt-0">
                 <p className="text-xs text-gray-500">
-                  {metrics.request_count.toLocaleString()} total requests
-                </p>
-                <p className="text-xs text-gray-500">
-                  {metrics.active_connections} active connections
+                  {(metrics.requests_total ?? 0).toLocaleString()} total requests
                 </p>
               </CardContent>
             )}
@@ -174,7 +188,7 @@ export default function MonitoringPage() {
                 variant="outline"
                 onClick={() => {
                   if (metrics) {
-                    const blob = new Blob([JSON.stringify(metrics, null, 2)], { type: "application/json" });
+                    const blob = new Blob([JSON.stringify({ ...metrics, cpu_percent: cpu, memory_percent: mem }, null, 2)], { type: "application/json" });
                     const a = document.createElement("a");
                     a.href = URL.createObjectURL(blob);
                     a.download = `metrics-${new Date().toISOString()}.json`;
@@ -194,14 +208,14 @@ export default function MonitoringPage() {
               <CardDescription>System alerts & warnings</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
-              {metrics && metrics.cpu_percent > 80 && (
+              {cpu > 80 && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
-                  High CPU usage: {metrics.cpu_percent.toFixed(1)}%
+                  High CPU usage: {cpu.toFixed(1)}%
                 </div>
               )}
-              {metrics && metrics.memory_percent > 85 && (
+              {mem > 85 && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
-                  High memory usage: {metrics.memory_percent.toFixed(1)}%
+                  High memory usage: {mem.toFixed(1)}%
                 </div>
               )}
               {metrics && metrics.disk_percent > 90 && (
@@ -209,7 +223,7 @@ export default function MonitoringPage() {
                   Low disk space: {(metrics.disk_total_gb - metrics.disk_used_gb).toFixed(0)}GB free
                 </div>
               )}
-              {metrics && metrics.cpu_percent <= 80 && metrics.memory_percent <= 85 && metrics.disk_percent <= 90 && (
+              {cpu <= 80 && mem <= 85 && (!metrics || metrics.disk_percent <= 90) && (
                 <div className="p-3 bg-green-50 border border-green-200 rounded-md text-sm text-green-700">
                   All systems normal
                 </div>

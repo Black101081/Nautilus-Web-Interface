@@ -239,6 +239,22 @@ export default function AdminDashboard() {
             </CardContent>
           </Card>
 
+{/* User Management Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>👥 User Management</CardTitle>
+              <CardDescription>Manage user accounts and roles</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Create, deactivate, and manage user accounts and access roles.
+              </p>
+              <Button onClick={() => window.location.href = '/admin/users'}>
+                Manage Users
+              </Button>
+            </CardContent>
+          </Card>
+
 {/* Documentation Card */}
           <Card>
             <CardHeader>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import api from '../lib/api';
 
 interface Instrument {
@@ -24,6 +25,7 @@ export default function MarketDataPage() {
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [quote, setQuote] = useState<MarketQuote | null>(null);
+  const [priceHistory, setPriceHistory] = useState<{ time: string; price: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -35,6 +37,7 @@ export default function MarketDataPage() {
 
   useEffect(() => {
     if (selected) {
+      setPriceHistory([]);
       fetchQuote(selected);
       if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = setInterval(() => fetchQuote(selected), 3000);
@@ -57,6 +60,11 @@ export default function MarketDataPage() {
     try {
       const data = await api.get<MarketQuote>(`/api/market-data/${symbol}`);
       setQuote(data);
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setPriceHistory(prev => {
+        const next = [...prev, { time, price: data.price }];
+        return next.length > 60 ? next.slice(-60) : next;
+      });
     } catch (err) {
       console.error('Failed to fetch quote:', err);
     }
@@ -197,6 +205,45 @@ export default function MarketDataPage() {
                     <div className="text-xs text-gray-400">USD equivalent</div>
                   </div>
                 </div>
+
+                {/* Price History Chart */}
+                {priceHistory.length > 1 && (
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                    <div className="text-sm font-semibold text-gray-700 mb-3">Price History (live)</div>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <LineChart data={priceHistory} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis
+                          dataKey="time"
+                          tick={{ fontSize: 10, fill: '#9ca3af' }}
+                          interval="preserveStartEnd"
+                          tickLine={false}
+                        />
+                        <YAxis
+                          domain={['auto', 'auto']}
+                          tick={{ fontSize: 10, fill: '#9ca3af' }}
+                          tickLine={false}
+                          axisLine={false}
+                          width={70}
+                          tickFormatter={(v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        />
+                        <Tooltip
+                          formatter={(v: number) => [`$${v.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Price']}
+                          labelStyle={{ fontSize: 11 }}
+                          contentStyle={{ fontSize: 12 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="price"
+                          stroke={quote.change_24h >= 0 ? '#16a34a' : '#dc2626'}
+                          strokeWidth={2}
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
 
                 {/* Subscribed Info */}
                 <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5">
