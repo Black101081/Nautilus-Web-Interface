@@ -182,6 +182,10 @@ async def init_db() -> None:
             "ALTER TABLE orders ADD COLUMN pnl REAL DEFAULT 0",
             "ALTER TABLE orders ADD COLUMN strategy_id TEXT",
             "ALTER TABLE orders ADD COLUMN exchange_order_id TEXT",
+            "ALTER TABLE orders ADD COLUMN avg_px REAL",
+            "ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'web'",
+            "ALTER TABLE orders ADD COLUMN client_order_id TEXT",
+            "ALTER TABLE positions ADD COLUMN source TEXT DEFAULT 'web'",
             "ALTER TABLE users ADD COLUMN totp_secret TEXT",
             "ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0",
         ]:
@@ -736,6 +740,99 @@ async def count_orders_today() -> int:
         ) as cur:
             row = await cur.fetchone()
     return int(row[0]) if row and row[0] is not None else 0
+
+
+# ── Live-node helpers (upsert by NautilusTrader IDs) ──────────────────────────
+
+async def upsert_order_by_client_id(
+    client_order_id: str,
+    instrument: str,
+    side: str,
+    order_type: str,
+    quantity: float,
+    price: Optional[float],
+    status: str,
+    exchange_order_id: Optional[str] = None,
+    filled_qty: float = 0.0,
+    avg_px: Optional[float] = None,
+    source: str = "live_node",
+) -> None:
+    """
+    Upsert an order using its NautilusTrader client_order_id as the lookup key.
+    Creates a new row if not found; updates status/fill fields if found.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Check if already exists by client_order_id
+        async with db.execute(
+            "SELECT id FROM orders WHERE client_order_id = ?", (client_order_id,)
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row:
+            await db.execute(
+                """UPDATE orders SET status=?, filled_qty=?, avg_px=?,
+                   exchange_order_id=COALESCE(?, exchange_order_id)
+                   WHERE client_order_id=?""",
+                (status, filled_qty, avg_px, exchange_order_id, client_order_id),
+            )
+        else:
+            order_id = f"ORD-{uuid.uuid4().hex[:8].upper()}"
+            await db.execute(
+                """INSERT INTO orders
+                   (id, client_order_id, instrument, side, type, quantity, price,
+                    status, filled_qty, avg_px, exchange_order_id, timestamp, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    order_id, client_order_id, instrument, side, order_type,
+                    quantity, price, status, filled_qty, avg_px, exchange_order_id,
+                    now, source,
+                ),
+            )
+        await db.commit()
+
+
+async def upsert_position_by_id(
+    position_id: str,
+    instrument: str,
+    side: str,
+    quantity: float,
+    entry_price: float,
+    is_open: bool,
+    exit_price: Optional[float] = None,
+    realized_pnl: float = 0.0,
+    source: str = "live_node",
+) -> None:
+    """
+    Upsert a position using its NautilusTrader position_id.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id FROM positions WHERE id = ?", (position_id,)
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row:
+            await db.execute(
+                """UPDATE positions SET quantity=?, exit_price=?, pnl=?, is_open=?,
+                   closed_at=CASE WHEN ? = 0 THEN ? ELSE closed_at END, source=?
+                   WHERE id=?""",
+                (quantity, exit_price, realized_pnl, 1 if is_open else 0,
+                 1 if is_open else 0, now, source, position_id),
+            )
+        else:
+            await db.execute(
+                """INSERT INTO positions
+                   (id, instrument, side, quantity, entry_price, exit_price, pnl,
+                    is_open, opened_at, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    position_id, instrument, side, quantity, entry_price,
+                    exit_price, realized_pnl, 1 if is_open else 0, now, source,
+                ),
+            )
+        await db.commit()
 
 
 # ── Users ──────────────────────────────────────────────────────────────────────

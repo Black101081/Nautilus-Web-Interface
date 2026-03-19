@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 import database
 from auth_jwt import get_current_user
 from risk_engine import risk_engine, RiskCheckError
-from state import live_manager, nautilus_system
+from state import live_manager, live_node, nautilus_system
 from utils import normalize_order
 
 router = APIRouter(prefix="/api", tags=["orders"])
@@ -24,17 +24,28 @@ class OrderCreateRequest(BaseModel):
 
 @router.get("/orders")
 async def list_orders():
-    """List orders: backtest orders + persistent user-created orders."""
+    """List orders: live node orders + DB orders (backtest + manual)."""
     all_orders: List[Dict[str, Any]] = []
 
+    # Live TradingNode orders (strategy-generated, most recent)
+    if live_node.is_connected():
+        for o in live_node.get_all_orders():
+            all_orders.append(o)
+
+    # Backtest results orders
     for results in nautilus_system.backtest_results.values():
         for o in results.get("orders", []):
             row = normalize_order(o)
             row["timestamp"] = datetime.now(timezone.utc).isoformat()
             all_orders.append(row)
 
+    # DB orders (manual UI orders + synced live orders)
     db_orders = await database.list_orders()
-    all_orders.extend(db_orders)
+    # Deduplicate by client_order_id if present
+    seen_cids = {o.get("client_order_id") for o in all_orders if o.get("client_order_id")}
+    for o in db_orders:
+        if o.get("client_order_id") not in seen_cids:
+            all_orders.append(o)
     return {"orders": all_orders, "count": len(all_orders)}
 
 

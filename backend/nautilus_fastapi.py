@@ -42,7 +42,7 @@ from routers import (
 )
 from routers.strategies import load_strategies_from_db
 from routers.components import load_component_states
-from state import manager, nautilus_system
+from state import manager, nautilus_system, live_node
 from alert_monitor import run_alert_monitor
 
 
@@ -319,27 +319,41 @@ async def _collect_live_snapshot() -> dict:
     except Exception:
         pass
 
-    # Strategies
-    strategy_list = [
-        {
-            "id": s["id"],
-            "name": s.get("name", s["id"]),
-            "status": s.get("status", "unknown"),
-        }
-        for s in nautilus_system.get_all_strategies()
-    ]
+    # Strategies — merge in-memory state with TradingNode strategy states
+    strategy_list = []
+    node_states = live_node.get_strategy_states()  # {strategy_id: state_str}
+    for s in nautilus_system.get_all_strategies():
+        sid = s["id"]
+        node_status = node_states.get(sid)
+        strategy_list.append({
+            "id": sid,
+            "name": s.get("name", sid),
+            # Prefer TradingNode status (more accurate) over in-memory status
+            "status": node_status if node_status else s.get("status", "unknown"),
+            "live_node": node_status is not None,
+        })
 
-    # Open positions (from latest backtest results, filtered by closed set)
-    all_positions = []
-    for results in nautilus_system.backtest_results.values():
-        all_positions.extend(results.get("positions", []))
-    open_positions = [p for p in all_positions if p.get("is_open")]
+    # Open positions — prefer TradingNode Portfolio, fallback to backtest results
+    open_position_count = 0
+    portfolio_summary: dict = {}
+    if live_node.is_connected():
+        portfolio_summary = live_node.get_portfolio_summary()
+        open_position_count = portfolio_summary.get("open_positions_count", 0)
+    else:
+        all_positions = []
+        for results in nautilus_system.backtest_results.values():
+            all_positions.extend(results.get("positions", []))
+        open_position_count = sum(1 for p in all_positions if p.get("is_open"))
 
-    # Recent orders count
-    order_count = sum(
-        len(r.get("orders", []))
-        for r in nautilus_system.backtest_results.values()
-    )
+    # Orders count
+    order_count = 0
+    if live_node.is_connected():
+        order_count = len(live_node.get_all_orders())
+    else:
+        order_count = sum(
+            len(r.get("orders", []))
+            for r in nautilus_system.backtest_results.values()
+        )
 
     return {
         "type": "live_data",
@@ -352,8 +366,10 @@ async def _collect_live_snapshot() -> dict:
         },
         "metrics": metrics,
         "strategies": strategy_list,
-        "open_positions_count": len(open_positions),
+        "open_positions_count": open_position_count,
         "total_orders_count": order_count,
+        "live_node": live_node.get_status(),
+        "portfolio": portfolio_summary,
     }
 
 

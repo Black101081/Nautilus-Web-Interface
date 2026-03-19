@@ -45,5 +45,6 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 from live_trading import LiveTradingManager  # noqa: E402
+from live_node import live_node  # noqa: E402  — NautilusTrader TradingNode singleton
 
 live_manager = LiveTradingManager()

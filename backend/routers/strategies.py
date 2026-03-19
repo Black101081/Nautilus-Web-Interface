@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 import database
 from auth_jwt import get_current_user
 import state as _state
+from live_node import build_live_strategy
 
 
 def _nautilus():
@@ -322,12 +323,41 @@ async def _strategy_exists(strategy_id: str) -> bool:
 async def start_strategy(strategy_id: str, _user: dict = Depends(get_current_user)):
     if not await _strategy_exists(strategy_id):
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+
     _nautilus().start_strategy(strategy_id)
     await database.update_strategy_status(strategy_id, "running")
+
+    # ── TradingNode integration ──────────────────────────────────────────────
+    node_started = False
+    node = _state.live_node
+    if node.is_connected():
+        if node.start_strategy(strategy_id):
+            node_started = True
+        else:
+            # Strategy not yet registered with node — build and register it
+            rows = await database.list_strategies()
+            row = next((r for r in rows if r["id"] == strategy_id), None)
+            if row:
+                import json as _json
+                cfg = {}
+                try:
+                    cfg = _json.loads(row.get("config", "{}"))
+                except Exception:
+                    pass
+                strategy_instance = build_live_strategy(
+                    strategy_type=row["type"],
+                    strategy_id=strategy_id,
+                    config=cfg,
+                )
+                if strategy_instance:
+                    await node.rebuild_with_new_strategy(strategy_id, strategy_instance)
+                    node_started = node.is_connected()
+
     return {
         "success": True,
         "message": f"Strategy {strategy_id} started",
         "live_engine_registered": True,
+        "node_started": node_started,
     }
 
 
@@ -335,8 +365,15 @@ async def start_strategy(strategy_id: str, _user: dict = Depends(get_current_use
 async def stop_strategy(strategy_id: str, _user: dict = Depends(get_current_user)):
     if not await _strategy_exists(strategy_id):
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+
     _nautilus().stop_strategy(strategy_id)
     await database.update_strategy_status(strategy_id, "stopped")
+
+    # ── TradingNode integration ──────────────────────────────────────────────
+    node = _state.live_node
+    if node.is_connected():
+        node.stop_strategy(strategy_id)
+
     return {
         "success": True,
         "message": f"Strategy {strategy_id} stopped",

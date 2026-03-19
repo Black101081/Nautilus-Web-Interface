@@ -17,7 +17,7 @@ from pydantic import BaseModel
 import database
 from auth_jwt import require_admin
 from credential_utils import encrypt_credential, mask_credential
-from state import live_manager
+from state import live_manager, live_node
 
 router = APIRouter(prefix="/api", tags=["adapters"])
 
@@ -229,17 +229,53 @@ async def connect_adapter(adapter_id: str, req: AdapterConnectRequest, _admin: d
 
     # Try to activate live trading node
     connection_id = None
+    node_started = False
     try:
         if adapter_id in ("binance", "binance_futures"):
+            # Step 1: HTTP credential check via legacy LiveTradingManager
             result = await live_manager.connect_binance(api_key, api_secret)
             connection_id = result.get("connection_id")
+            # Step 2: Start TradingNode with full Nautilus pipeline
+            try:
+                is_testnet = False  # TODO: support testnet flag in UI
+                await live_node.connect(
+                    adapter_type=adapter_id,
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    testnet=is_testnet,
+                )
+                node_started = live_node.is_connected()
+            except Exception as node_exc:
+                # TradingNode start failure is non-fatal — HTTP adapter still works
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "TradingNode start failed for %s (HTTP adapter still active): %s",
+                    adapter_id, node_exc,
+                )
+
         elif adapter_id == "bybit":
             result = await live_manager.connect_bybit(api_key, api_secret)
             connection_id = result.get("connection_id")
+            try:
+                await live_node.connect(
+                    adapter_type="bybit",
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    testnet=False,
+                )
+                node_started = live_node.is_connected()
+            except Exception as node_exc:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "TradingNode start failed for bybit: %s", node_exc,
+                )
         # Other adapters: store credentials only (no live node yet)
 
         import json
-        extra = {"connection_id": connection_id} if connection_id else {}
+        extra = {
+            "connection_id": connection_id,
+            "node_started": node_started,
+        }
         await database.upsert_adapter_config(
             adapter_id=adapter_id,
             status="connected",
@@ -252,7 +288,9 @@ async def connect_adapter(adapter_id: str, req: AdapterConnectRequest, _admin: d
             "adapter_id": adapter_id,
             "status": "connected",
             "connection_id": connection_id,
-            "message": f"Adapter '{meta['name']}' connected.",
+            "node_started": node_started,
+            "message": f"Adapter '{meta['name']}' connected."
+            + (" TradingNode live." if node_started else " HTTP mode."),
             "last_connected": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as exc:
@@ -270,8 +308,9 @@ async def disconnect_adapter(adapter_id: str, _admin: dict = Depends(require_adm
     if adapter_id not in _ADAPTER_BY_ID:
         raise HTTPException(status_code=404, detail=f"Adapter '{adapter_id}' not found")
 
-    # Disconnect from live trading manager
+    # Disconnect from live trading manager and TradingNode
     await live_manager.disconnect(adapter_id)
+    await live_node.disconnect(adapter_id)
 
     await database.upsert_adapter_config(
         adapter_id=adapter_id,

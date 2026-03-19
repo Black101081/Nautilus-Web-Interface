@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 import database
 from auth_jwt import get_current_user
 from state import nautilus_system, manager
+import data_loader
 
 router = APIRouter(prefix="/api/nautilus", tags=["backtest"])
 
@@ -61,6 +62,32 @@ async def run_backtest(request: BacktestRequest, _user: dict = Depends(get_curre
         raise HTTPException(status_code=409, detail="A backtest is already running. Please wait.")
     _backtest_lock = True
     try:
+        # ── Auto-download data if not in catalog ─────────────────────────────
+        strategy = nautilus_system.strategies.get(request.strategy_id)
+        if strategy:
+            cfg = strategy.get("config") or {}
+            instrument_id = (
+                cfg.get("instrument_id") if isinstance(cfg, dict)
+                else getattr(cfg, "instrument_id", None)
+            ) or "EUR/USD.SIM"
+            # Only auto-download for Binance symbols (not SIM)
+            if ".SIM" not in instrument_id and "BINANCE" in instrument_id.upper():
+                symbol = instrument_id.split(".")[0]
+                catalog_path = nautilus_system.catalog_path
+                success, msg = await data_loader.ensure_data_available(
+                    symbol=symbol,
+                    interval="1m",
+                    start_date=request.start_date,
+                    end_date=request.end_date,
+                    catalog_path=catalog_path,
+                )
+                if not success:
+                    # Log warning but continue — catalog may already have data
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "Auto-download failed for %s: %s", symbol, msg
+                    )
+
         result = nautilus_system.run_backtest(
             strategy_id=request.strategy_id,
             start_date=request.start_date,
@@ -234,6 +261,53 @@ async def run_parameter_sweep(request: ParameterSweepRequest, _user: dict = Depe
 @router.get("/system-info")
 async def get_system_info():
     return nautilus_system.get_system_info()
+
+
+class DataDownloadRequest(BaseModel):
+    symbol: str = Field("BTCUSDT", min_length=3, max_length=20)
+    interval: str = Field("1m", pattern="^(1m|3m|5m|15m|30m|1h|2h|4h|6h|8h|12h|1d|1w)$")
+    start_date: str = "2024-01-01"
+    end_date: str = "2024-01-31"
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def check_date(cls, v: str) -> str:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+            raise ValueError("Date must be YYYY-MM-DD")
+        return v
+
+
+@router.post("/download-data")
+async def download_data(
+    request: DataDownloadRequest, _user: dict = Depends(get_current_user)
+):
+    """
+    Download historical OHLCV data from Binance and store in the
+    NautilusTrader ParquetDataCatalog for use in backtesting.
+    """
+    catalog_path = nautilus_system.catalog_path
+    success, msg, count = await data_loader.download_and_cache(
+        symbol=request.symbol,
+        interval=request.interval,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        catalog_path=catalog_path,
+    )
+    if not success:
+        raise HTTPException(status_code=502, detail=msg)
+
+    # Re-initialize catalog so new instruments are visible
+    nautilus_system.initialize()
+
+    return {
+        "success": True,
+        "symbol": request.symbol,
+        "interval": request.interval,
+        "start_date": request.start_date,
+        "end_date": request.end_date,
+        "bars_downloaded": count,
+        "message": msg,
+    }
 
 
 @router.post("/initialize")

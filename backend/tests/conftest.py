@@ -5,12 +5,17 @@ Resets module-level rate-limit counters before each test so that the
 /api/auth/login call inside every `client` fixture is never blocked by the
 5-req/minute cap that accumulates across the test session.
 """
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Disable the NautilusTrader TradingNode in tests — it makes C-level calls that
+# abort the process when run outside a proper live environment.
+os.environ.setdefault("NAUTILUS_DISABLE_LIVE_NODE", "1")
 
 
 @pytest.fixture

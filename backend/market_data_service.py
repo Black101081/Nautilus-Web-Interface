@@ -163,10 +163,43 @@ async def get_symbol_data(symbol: str) -> Dict[str, Any]:
     """
     Return 24-hr ticker data for a single symbol.
 
-    Uses the per-symbol cache; falls back to a fresh Binance request if
-    stale, then to the last known cached value, then to hard-coded defaults.
+    Priority chain:
+      1. NautilusTrader DataEngine quote cache (real-time, zero extra calls)
+      2. Per-symbol REST cache (< 5s old)
+      3. Fresh Binance REST request
+      4. Stale cached Binance response
+      5. Hard-coded fallback defaults
     """
     upper = symbol.upper()
+
+    # ── 1. Try NautilusTrader DataEngine quote cache ──────────────────────────
+    try:
+        from state import live_node
+        if live_node.is_connected():
+            # Map BTCUSDT → BTCUSDT.BINANCE (or BYBIT)
+            for venue_suffix in ("BINANCE", "BYBIT"):
+                instrument_id_str = f"{upper}.{venue_suffix}"
+                quote = live_node.get_latest_quote(instrument_id_str)
+                if quote:
+                    mid = (quote["bid"] + quote["ask"]) / 2
+                    data = {
+                        "symbol": upper,
+                        "base": upper[:-4] if upper.endswith("USDT") else upper,
+                        "quote": "USDT",
+                        "exchange": venue_suffix,
+                        "price": round(mid, 8),
+                        "bid": round(quote["bid"], 8),
+                        "ask": round(quote["ask"], 8),
+                        "change_24h": 0.0,
+                        "volume_24h": 0.0,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "source": "live_node",
+                    }
+                    # Update local cache as side-effect
+                    _symbol_cache[upper] = {"data": data, "fetched_at": time.monotonic()}
+                    return data
+    except Exception:
+        pass
 
     async with _fetch_lock:
         if _cache_is_fresh(_symbol_cache.get(upper)):

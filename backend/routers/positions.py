@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends
 import database
 from auth_jwt import get_current_user
 import market_data_service as svc
-from state import live_manager, nautilus_system
+from state import live_manager, live_node, nautilus_system
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["positions"])
@@ -68,35 +68,52 @@ async def _enrich_current_prices(positions: List[Dict[str, Any]]) -> List[Dict[s
 
 @router.get("/positions")
 async def list_positions():
-    # Primary: DB-persisted positions (survive restarts, reflect latest backtest)
-    db_positions = await database.list_db_positions(open_only=True)
+    # ── Priority 1: NautilusTrader Portfolio (live TradingNode) ──────────────
+    if live_node.is_connected():
+        node_positions = live_node.get_open_positions()
+        if node_positions:
+            enriched = await _enrich_current_prices(node_positions)
+            return enriched
 
-    # Determine data source
+    # ── Priority 2: DB-persisted positions (survive restarts) ────────────────
+    db_positions = await database.list_db_positions(open_only=True)
     source = "live" if live_manager.is_connected() else "cached"
 
     if db_positions:
         enriched = await _enrich_current_prices(db_positions)
         for pos in enriched:
-            pos["source"] = source
+            pos.setdefault("source", source)
         return enriched
 
-    # Fallback: in-memory backtest results (before first backtest persists to DB)
+    # ── Priority 3: In-memory backtest results (before first backtest) ────────
     all_positions = []
     for results in nautilus_system.backtest_results.values():
         all_positions.extend(results.get("positions", []))
     open_pos = [p for p in all_positions if p.get("is_open", False)]
     enriched = await _enrich_current_prices(open_pos)
     for pos in enriched:
-        pos["source"] = source
+        pos.setdefault("source", source)
     return enriched
 
 
 @router.post("/positions/sync")
 async def sync_positions(_user: dict = Depends(get_current_user)):
-    """Sync open positions from the connected exchange."""
-    live_positions = await live_manager.sync_positions()
+    """Sync open positions from the TradingNode (preferred) or HTTP API."""
+    # ── TradingNode Portfolio (most accurate) ─────────────────────────────────
+    if live_node.is_connected():
+        node_positions = live_node.get_open_positions()
+        closed_positions = live_node.get_closed_positions()
+        all_positions = node_positions + closed_positions
+        if all_positions:
+            return {
+                "success": True,
+                "synced_count": len(all_positions),
+                "positions": all_positions,
+                "source": "live_node",
+            }
 
-    # Persist synced positions to DB
+    # ── Fallback: HTTP account query ──────────────────────────────────────────
+    live_positions = await live_manager.sync_positions()
     if live_positions:
         await database.save_positions(live_positions)
 
@@ -104,26 +121,28 @@ async def sync_positions(_user: dict = Depends(get_current_user)):
         "success": True,
         "synced_count": len(live_positions),
         "positions": live_positions,
+        "source": "http_api",
     }
 
 
 @router.post("/positions/{position_id}/close")
 async def close_position(position_id: str, _user: dict = Depends(get_current_user)):
+    # Determine position details from DB for close order params
+    positions = await database.list_db_positions(open_only=False)
+    target = next((p for p in positions if p["id"] == position_id), None)
+
+    close_side = "SELL"
+    instrument = "UNKNOWN"
+    quantity = 0.0
+    if target:
+        instrument = target.get("instrument", "UNKNOWN")
+        quantity = float(target.get("quantity", 0))
+        pos_side = str(target.get("side", "LONG")).upper()
+        close_side = "SELL" if "LONG" in pos_side or "BUY" in pos_side else "BUY"
+
     # If adapter connected, send a close order to the exchange
     if live_manager.is_connected():
         try:
-            # Fetch position from DB to get side/instrument
-            positions = await database.list_db_positions(open_only=False)
-            target = next((p for p in positions if p["id"] == position_id), None)
-            close_side = "SELL"
-            instrument = "UNKNOWN"
-            quantity = 0.0
-            if target:
-                instrument = target.get("instrument", "UNKNOWN")
-                quantity = float(target.get("quantity", 0))
-                pos_side = str(target.get("side", "LONG")).upper()
-                close_side = "SELL" if "LONG" in pos_side or "BUY" in pos_side else "BUY"
-
             await live_manager.submit_order({
                 "instrument": instrument,
                 "side": close_side,

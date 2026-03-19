@@ -24,6 +24,7 @@ from nautilus_trader.persistence.catalog import ParquetDataCatalog
 # Import our real strategies
 from strategies.sma_crossover import SMACrossoverStrategy, SMACrossoverConfig
 from strategies.rsi_strategy import RSIStrategy, RSIStrategyConfig
+from strategies.macd_strategy import MACDStrategy, MACDStrategyConfig
 
 
 class NautilusTradingSystem:
@@ -151,32 +152,16 @@ class NautilusTradingSystem:
                 )
                 name = config.get("name", "RSI Mean-Reversion")
             elif strategy_type == "macd":
-                fast = int(config.get("fast_period", 12))
-                slow = int(config.get("slow_period", 26))
-                signal = int(config.get("signal_period", 9))
+                strategy_config = MACDStrategyConfig(
+                    strategy_id=strategy_id,
+                    instrument_id=config.get("instrument_id", "EUR/USD.SIM"),
+                    bar_type=config.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
+                    fast_period=int(config.get("fast_period", 12)),
+                    slow_period=int(config.get("slow_period", 26)),
+                    signal_period=int(config.get("signal_period", 9)),
+                    trade_size=Decimal(str(config.get("trade_size", "100000"))),
+                )
                 name = config.get("name", "MACD Crossover")
-                # MACD doesn't map to a Nautilus engine config — stored as plain dict
-                self.strategies[strategy_id] = {
-                    "id": strategy_id,
-                    "name": name,
-                    "type": strategy_type,
-                    "config": {
-                        "fast_period": fast,
-                        "slow_period": slow,
-                        "signal_period": signal,
-                        "instrument_id": config.get("instrument_id", "EUR/USD.SIM"),
-                        "bar_type": config.get("bar_type", "EUR/USD.SIM-1-MINUTE-BID-INTERNAL"),
-                        "trade_size": str(config.get("trade_size", "100000")),
-                    },
-                    "status": "created",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                }
-                return {
-                    "success": True,
-                    "message": f"Strategy {strategy_id} created",
-                    "strategy_id": strategy_id,
-                    "type": strategy_type,
-                }
             else:
                 return {
                     "success": False,
@@ -242,12 +227,7 @@ class NautilusTradingSystem:
             strategy_config = strategy_info["config"]
             strategy_type = strategy_info["type"]
 
-            # MACD has no real BacktestEngine implementation — return early
-            if strategy_type == "macd":
-                return {
-                    "success": False,
-                    "message": "MACD backtest is not yet supported in the engine",
-                }
+            # All strategy types now supported in BacktestEngine
 
             # Resolve instrument_id safely for both config objects and plain dicts
             if isinstance(strategy_config, dict):
@@ -315,6 +295,8 @@ class NautilusTradingSystem:
             # Create and add strategy (dispatch by type)
             if strategy_info["type"] == "rsi":
                 strategy = RSIStrategy(config=strategy_config)
+            elif strategy_info["type"] == "macd":
+                strategy = MACDStrategy(config=strategy_config)
             else:
                 strategy = SMACrossoverStrategy(config=strategy_config)
             engine.add_strategy(strategy=strategy)
