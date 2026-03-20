@@ -4,11 +4,13 @@ Supports: sma_crossover, rsi, macd
 """
 
 import json
+import os
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 import database
@@ -61,6 +63,48 @@ _STRATEGY_TYPES = {
             "trade_size": "100000",
         },
     },
+    "ema_crossover": {
+        "label": "EMA Crossover",
+        "description": "Buy when fast EMA crosses above slow EMA (more responsive than SMA).",
+        "default_config": {
+            "instrument_id": "EUR/USD.SIM",
+            "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+            "fast_period": 9,
+            "slow_period": 21,
+            "trade_size": "100000",
+        },
+    },
+    "bollinger_bands": {
+        "label": "Bollinger Bands",
+        "description": "Mean-reversion: buy at lower band, sell at upper band, exit at mid.",
+        "default_config": {
+            "instrument_id": "EUR/USD.SIM",
+            "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+            "period": 20,
+            "std_dev": 2.0,
+            "trade_size": "100000",
+        },
+    },
+    "vwap": {
+        "label": "VWAP",
+        "description": "Mean-reversion using rolling VWAP: buy below, sell above, exit at VWAP.",
+        "default_config": {
+            "instrument_id": "EUR/USD.SIM",
+            "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+            "vwap_period": 20,
+            "deviation_pct": 0.5,
+            "trade_size": "100000",
+        },
+    },
+    "custom": {
+        "label": "Custom Strategy",
+        "description": "Upload your own Nautilus Trader strategy Python file.",
+        "default_config": {
+            "instrument_id": "EUR/USD.SIM",
+            "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+            "trade_size": "100000",
+        },
+    },
 }
 
 
@@ -107,7 +151,7 @@ async def load_strategies_from_db() -> None:
             s = _db_row_to_strategy(row)
             _nautilus().strategies[sid] = s
             # Register with NautilusTrader engine (SMA and RSI supported)
-            if s["type"] in ("sma_crossover", "rsi", "macd"):
+            if s["type"] in ("sma_crossover", "rsi", "macd", "ema_crossover", "bollinger_bands", "vwap"):
                 cfg = s["config"]
                 _nautilus().create_strategy({
                     "id": sid,
@@ -255,6 +299,35 @@ async def create_strategy(body: Dict[str, Any] = Body(...), _user: dict = Depend
                 detail=f"MACD fast_period ({fast}) must be less than slow_period ({slow})",
             )
 
+    # EMA validation
+    if strategy_type == "ema_crossover":
+        fast = int(body.get("fast_period") or 9)
+        slow = int(body.get("slow_period") or 21)
+        if fast >= slow:
+            raise HTTPException(
+                status_code=422,
+                detail=f"EMA fast_period ({fast}) must be less than slow_period ({slow})",
+            )
+
+    # Bollinger Bands validation
+    if strategy_type == "bollinger_bands":
+        period = int(body.get("period") or 20)
+        std_dev = float(body.get("std_dev") or 2.0)
+        if period < 2:
+            raise HTTPException(status_code=422, detail="Bollinger period must be >= 2")
+        if std_dev <= 0:
+            raise HTTPException(status_code=422, detail="std_dev must be > 0")
+
+    # VWAP validation
+    if strategy_type == "vwap":
+        vwap_period = int(body.get("vwap_period") if body.get("vwap_period") is not None else 20)
+        deviation_pct_raw = body.get("deviation_pct")
+        deviation_pct = float(deviation_pct_raw) if deviation_pct_raw is not None else 0.5
+        if vwap_period < 2:
+            raise HTTPException(status_code=422, detail="vwap_period must be >= 2")
+        if deviation_pct <= 0:
+            raise HTTPException(status_code=422, detail="deviation_pct must be > 0")
+
     defaults = _STRATEGY_TYPES[strategy_type]["default_config"].copy()
     sid = body.get("id") or f"STR-{uuid.uuid4().hex[:8].upper()}"
     description = body.get("description", _STRATEGY_TYPES[strategy_type]["description"])
@@ -378,4 +451,76 @@ async def stop_strategy(strategy_id: str, _user: dict = Depends(get_current_user
         "success": True,
         "message": f"Strategy {strategy_id} stopped",
         "live_engine_registered": False,
+    }
+
+
+# ── Custom strategy upload ─────────────────────────────────────────────────────
+
+_CUSTOM_STRATEGIES_DIR = os.path.join(os.path.dirname(__file__), "..", "custom_strategies")
+
+
+@router.post("/strategies/upload")
+async def upload_custom_strategy(
+    file: UploadFile = File(...),
+    _user: dict = Depends(get_current_user),
+):
+    """
+    Upload a custom Nautilus Trader strategy Python file.
+
+    The file must be a valid .py file. It is stored in backend/custom_strategies/
+    and registered as a 'custom' type strategy available for backtesting.
+    """
+    if not file.filename or not file.filename.endswith(".py"):
+        raise HTTPException(status_code=400, detail="Only .py files are accepted")
+
+    # Read and basic-validate content
+    content = await file.read()
+    if len(content) > 512 * 1024:  # 512 KB limit
+        raise HTTPException(status_code=400, detail="File too large (max 512 KB)")
+
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded")
+
+    # Require at least one Strategy subclass marker
+    if "Strategy" not in text:
+        raise HTTPException(
+            status_code=400,
+            detail="File does not appear to contain a Nautilus Strategy subclass",
+        )
+
+    os.makedirs(_CUSTOM_STRATEGIES_DIR, exist_ok=True)
+
+    # Sanitize filename
+    safe_name = "".join(c for c in file.filename if c.isalnum() or c in ("_", "-", "."))
+    dest_path = os.path.join(_CUSTOM_STRATEGIES_DIR, safe_name)
+
+    with open(dest_path, "wb") as f:
+        f.write(content)
+
+    sid = f"CUSTOM-{uuid.uuid4().hex[:8].upper()}"
+    now = datetime.now(timezone.utc).isoformat()
+    strategy_row = {
+        "id": sid,
+        "name": safe_name.replace(".py", ""),
+        "type": "custom",
+        "status": "stopped",
+        "description": f"Custom strategy uploaded from {file.filename}",
+        "config": {
+            "file": safe_name,
+            "instrument_id": "EUR/USD.SIM",
+            "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+            "trade_size": "100000",
+        },
+        "created_at": now,
+        "updated_at": now,
+    }
+    await database.save_strategy(strategy_row)
+
+    return {
+        "success": True,
+        "strategy_id": sid,
+        "filename": safe_name,
+        "message": f"Custom strategy '{safe_name}' uploaded and registered.",
     }

@@ -28,6 +28,22 @@ SYMBOLS: List[str] = [
     "SOLUSDT",
     "ADAUSDT",
     "DOTUSDT",
+    "XRPUSDT",
+    "DOGEUSDT",
+    "AVAXUSDT",
+    "LINKUSDT",
+    "MATICUSDT",
+    "UNIUSDT",
+    "LTCUSDT",
+    "ATOMUSDT",
+    "NEARUSDT",
+]
+
+# Supported candlestick intervals (Binance notation)
+OHLCV_INTERVALS: List[str] = [
+    "1m", "3m", "5m", "15m", "30m",
+    "1h", "2h", "4h", "6h", "8h", "12h",
+    "1d", "3d", "1w", "1M",
 ]
 
 # ---------------------------------------------------------------------------
@@ -35,12 +51,21 @@ SYMBOLS: List[str] = [
 # is empty — i.e. on a cold start with no network).
 # ---------------------------------------------------------------------------
 _FALLBACK: Dict[str, Dict[str, Any]] = {
-    "BTCUSDT": {"price": 65420.0, "change_24h": 2.3,  "bid": 65419.0, "ask": 65421.0, "volume_24h": 30_000_000.0},
-    "ETHUSDT": {"price":  3240.0, "change_24h": -0.8, "bid":  3239.5, "ask":  3240.5, "volume_24h": 15_000_000.0},
-    "BNBUSDT": {"price":   580.0, "change_24h":  1.1, "bid":   579.8, "ask":   580.2, "volume_24h":  5_000_000.0},
-    "SOLUSDT": {"price":   175.0, "change_24h":  4.2, "bid":   174.9, "ask":   175.1, "volume_24h":  8_000_000.0},
-    "ADAUSDT": {"price":   0.485, "change_24h": -1.5, "bid":   0.4849,"ask":   0.4851,"volume_24h":  2_000_000.0},
-    "DOTUSDT": {"price":     8.2, "change_24h":  0.7, "bid":   8.19,  "ask":   8.21,  "volume_24h":  1_000_000.0},
+    "BTCUSDT":   {"price": 65420.0, "change_24h":  2.3, "bid": 65419.0,  "ask": 65421.0,  "volume_24h": 30_000_000.0},
+    "ETHUSDT":   {"price":  3240.0, "change_24h": -0.8, "bid":  3239.5,  "ask":  3240.5,  "volume_24h": 15_000_000.0},
+    "BNBUSDT":   {"price":   580.0, "change_24h":  1.1, "bid":   579.8,  "ask":   580.2,  "volume_24h":  5_000_000.0},
+    "SOLUSDT":   {"price":   175.0, "change_24h":  4.2, "bid":   174.9,  "ask":   175.1,  "volume_24h":  8_000_000.0},
+    "ADAUSDT":   {"price":   0.485, "change_24h": -1.5, "bid":   0.4849, "ask":   0.4851, "volume_24h":  2_000_000.0},
+    "DOTUSDT":   {"price":     8.2, "change_24h":  0.7, "bid":   8.19,   "ask":   8.21,   "volume_24h":  1_000_000.0},
+    "XRPUSDT":   {"price":   0.590, "change_24h":  1.2, "bid":   0.589,  "ask":   0.591,  "volume_24h":  3_000_000.0},
+    "DOGEUSDT":  {"price":  0.1380, "change_24h":  3.1, "bid":  0.1379,  "ask":  0.1381,  "volume_24h":  2_500_000.0},
+    "AVAXUSDT":  {"price":    37.5, "change_24h": -1.0, "bid":    37.49, "ask":    37.51,  "volume_24h":  1_200_000.0},
+    "LINKUSDT":  {"price":    14.8, "change_24h":  0.5, "bid":    14.79, "ask":    14.81,  "volume_24h":    800_000.0},
+    "MATICUSDT": {"price":   0.860, "change_24h": -0.3, "bid":   0.859,  "ask":   0.861,  "volume_24h":  1_500_000.0},
+    "UNIUSDT":   {"price":    7.20, "change_24h":  2.0, "bid":    7.19,  "ask":    7.21,  "volume_24h":    600_000.0},
+    "LTCUSDT":   {"price":    85.0, "change_24h":  0.8, "bid":    84.9,  "ask":    85.1,  "volume_24h":    900_000.0},
+    "ATOMUSDT":  {"price":    9.50, "change_24h": -0.4, "bid":    9.49,  "ask":    9.51,  "volume_24h":    700_000.0},
+    "NEARUSDT":  {"price":    5.80, "change_24h":  1.5, "bid":    5.79,  "ask":    5.81,  "volume_24h":    500_000.0},
 }
 
 # ---------------------------------------------------------------------------
@@ -224,3 +249,106 @@ async def get_symbol_data(symbol: str) -> Dict[str, Any]:
                 return _symbol_cache[upper]["data"]
             # Ultimate fallback
             return _fallback_for(upper)
+
+
+# ---------------------------------------------------------------------------
+# OHLCV / Candlestick data
+# ---------------------------------------------------------------------------
+
+# Cache for candlestick data: (symbol, interval) -> {"data": [...], "fetched_at": float}
+_ohlcv_cache: Dict[tuple, Dict[str, Any]] = {}
+_OHLCV_CACHE_TTL = 30  # seconds
+
+
+def _parse_kline(k: list) -> Dict[str, Any]:
+    """Convert a Binance kline array to OHLCV dict."""
+    return {
+        "time": int(k[0]),           # open time (ms)
+        "open": float(k[1]),
+        "high": float(k[2]),
+        "low": float(k[3]),
+        "close": float(k[4]),
+        "volume": float(k[5]),
+        "close_time": int(k[6]),     # close time (ms)
+        "quote_volume": float(k[7]),
+        "trades": int(k[8]),
+    }
+
+
+def _generate_fallback_ohlcv(symbol: str, interval: str, limit: int) -> List[Dict[str, Any]]:
+    """Generate synthetic OHLCV bars when Binance is unreachable."""
+    import random
+    fb = _FALLBACK.get(symbol.upper(), {"price": 100.0})
+    base_price = fb["price"]
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+    # Determine bar duration in ms
+    _dur = {
+        "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
+        "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000,
+        "6h": 21_600_000, "8h": 28_800_000, "12h": 43_200_000,
+        "1d": 86_400_000, "3d": 259_200_000, "1w": 604_800_000, "1M": 2_592_000_000,
+    }
+    dur_ms = _dur.get(interval, 60_000)
+
+    bars = []
+    price = base_price * 0.95
+    for i in range(limit - 1, -1, -1):
+        open_t = now_ms - i * dur_ms
+        close_t = open_t + dur_ms - 1
+        change = random.uniform(-0.01, 0.01) * price
+        o = round(price, 8)
+        c = round(price + change, 8)
+        h = round(max(o, c) * random.uniform(1.0, 1.005), 8)
+        lo = round(min(o, c) * random.uniform(0.995, 1.0), 8)
+        vol = round(random.uniform(100, 10000), 4)
+        bars.append({
+            "time": open_t,
+            "open": o, "high": h, "low": lo, "close": c,
+            "volume": vol,
+            "close_time": close_t,
+            "quote_volume": round(vol * (o + c) / 2, 2),
+            "trades": random.randint(10, 500),
+        })
+        price = c
+    return bars
+
+
+async def get_ohlcv(
+    symbol: str,
+    interval: str = "1h",
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    """
+    Return OHLCV candlestick data for *symbol* at *interval* resolution.
+
+    Uses Binance /api/v3/klines endpoint (no auth required).
+    Falls back to synthetic bars on network errors.
+    """
+    upper = symbol.upper()
+    if interval not in OHLCV_INTERVALS:
+        interval = "1h"
+    limit = max(1, min(limit, 1000))
+
+    cache_key = (upper, interval)
+    entry = _ohlcv_cache.get(cache_key)
+    if entry and (time.monotonic() - entry["fetched_at"]) < _OHLCV_CACHE_TTL:
+        return entry["data"]
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                f"{BINANCE_BASE}/api/v3/klines",
+                params={"symbol": upper, "interval": interval, "limit": limit},
+            )
+            resp.raise_for_status()
+            klines = resp.json()
+
+        bars = [_parse_kline(k) for k in klines]
+        _ohlcv_cache[cache_key] = {"data": bars, "fetched_at": time.monotonic()}
+        return bars
+
+    except Exception:
+        if entry:
+            return entry["data"]
+        return _generate_fallback_ohlcv(upper, interval, limit)

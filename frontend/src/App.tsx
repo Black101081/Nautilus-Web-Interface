@@ -31,6 +31,8 @@ import AlertsPage from "./pages/AlertsPage";
 import BacktestingPage from "./pages/BacktestingPage";
 import UsersPage from "./pages/UsersPage";
 import LoginPage from "./pages/LoginPage";
+import AnalyticsPage from "./pages/AnalyticsPage";
+import CatalogPage from "./pages/CatalogPage";
 import { API_CONFIG } from "./config";
 
 function Router() {
@@ -61,6 +63,8 @@ function Router() {
       <Route path="/trader/performance" component={PerformancePage} />
       <Route path="/trader/alerts" component={AlertsPage} />
       <Route path="/trader/backtesting" component={BacktestingPage} />
+      <Route path="/trader/analytics" component={AnalyticsPage} />
+      <Route path="/trader/catalog" component={CatalogPage} />
       <Route path="/docs" component={DocsPage} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />

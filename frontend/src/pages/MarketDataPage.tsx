@@ -1,5 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid, Cell,
+} from 'recharts';
 import api from '../lib/api';
 
 interface Instrument {
@@ -21,12 +24,55 @@ interface MarketQuote {
   timestamp: string;
 }
 
+interface OHLCVBar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d', '1w'];
+
+function CandlestickTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  const color = d.close >= d.open ? '#16a34a' : '#dc2626';
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs">
+      <div className="font-bold text-gray-700 mb-1">
+        {new Date(d.time).toLocaleString()}
+      </div>
+      {[['O', d.open], ['H', d.high], ['L', d.low], ['C', d.close]].map(([label, val]) => (
+        <div key={String(label)} className="flex justify-between gap-4">
+          <span className="text-gray-500">{label}</span>
+          <span style={{ color }} className="font-semibold">
+            {Number(val).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          </span>
+        </div>
+      ))}
+      <div className="flex justify-between gap-4 mt-1 border-t pt-1">
+        <span className="text-gray-500">Vol</span>
+        <span className="font-semibold text-gray-700">
+          {Number(d.volume).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function MarketDataPage() {
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [quote, setQuote] = useState<MarketQuote | null>(null);
   const [priceHistory, setPriceHistory] = useState<{ time: string; price: number }[]>([]);
+  const [ohlcv, setOhlcv] = useState<OHLCVBar[]>([]);
+  const [interval, setIntervalVal] = useState('1h');
+  const [activeTab, setActiveTab] = useState<'live' | 'ohlcv'>('live');
   const [loading, setLoading] = useState(true);
+  const [loadingOhlcv, setLoadingOhlcv] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -43,6 +89,12 @@ export default function MarketDataPage() {
       intervalRef.current = setInterval(() => fetchQuote(selected), 3000);
     }
   }, [selected]);
+
+  useEffect(() => {
+    if (selected && activeTab === 'ohlcv') {
+      fetchOhlcv(selected, interval);
+    }
+  }, [selected, interval, activeTab]);
 
   const fetchInstruments = async () => {
     try {
@@ -70,15 +122,55 @@ export default function MarketDataPage() {
     }
   };
 
+  const fetchOhlcv = async (symbol: string, iv: string) => {
+    setLoadingOhlcv(true);
+    try {
+      const data = await api.get<{ bars: OHLCVBar[] }>(
+        `/api/market-data/ohlcv/${symbol}?interval=${iv}&limit=200`
+      );
+      setOhlcv(data.bars || []);
+    } catch (err) {
+      console.error('Failed to fetch OHLCV:', err);
+    } finally {
+      setLoadingOhlcv(false);
+    }
+  };
+
   const handleRefresh = async () => {
     setRefreshing(true);
     await fetchInstruments();
-    if (selected) await fetchQuote(selected);
+    if (selected) {
+      await fetchQuote(selected);
+      if (activeTab === 'ohlcv') await fetchOhlcv(selected, interval);
+    }
     setRefreshing(false);
+  };
+
+  const handleExportCsv = () => {
+    if (!selected) return;
+    window.open(`/api/catalog/export/csv/${selected}?interval=${interval}&limit=200`, '_blank');
   };
 
   const getChangeColor = (change: number) => change >= 0 ? 'text-green-600' : 'text-red-600';
   const getChangeBg = (change: number) => change >= 0 ? 'bg-green-100' : 'bg-red-100';
+
+  // Prepare candlestick data: encode OHLC as stacked bar ranges
+  const candleData = ohlcv.map(b => {
+    const bullish = b.close >= b.open;
+    const bodyLow = Math.min(b.open, b.close);
+    const bodyHigh = Math.max(b.open, b.close);
+    const label = new Date(b.time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return {
+      ...b,
+      label,
+      bullish,
+      bodyLow,
+      bodyHigh,
+      bodySize: bodyHigh - bodyLow || 0.01,
+      wickTop: b.high - bodyHigh,
+      wickBottom: bodyLow - b.low,
+    };
+  });
 
   if (loading) {
     return (
@@ -90,12 +182,12 @@ export default function MarketDataPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 p-8">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
             <h1 className="text-4xl font-bold text-gray-900 mb-1">📊 Market Data</h1>
-            <p className="text-gray-500">Real-time market feeds and quotes</p>
+            <p className="text-gray-500">Real-time quotes and OHLCV candlestick charts</p>
           </div>
           <div className="flex gap-3">
             <button
@@ -114,29 +206,30 @@ export default function MarketDataPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Instrument List */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100">
                 <h2 className="font-bold text-gray-900">Instruments</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{instruments.length} pairs</p>
               </div>
-              <div className="divide-y divide-gray-50">
+              <div className="divide-y divide-gray-50 max-h-[600px] overflow-y-auto">
                 {instruments.map(inst => (
                   <button
                     key={inst.symbol}
                     onClick={() => setSelected(inst.symbol)}
-                    className={`w-full px-5 py-4 text-left transition-colors hover:bg-indigo-50 flex items-center justify-between ${
+                    className={`w-full px-5 py-3 text-left transition-colors hover:bg-indigo-50 flex items-center justify-between ${
                       selected === inst.symbol ? 'bg-indigo-50 border-l-4 border-indigo-500' : ''
                     }`}
                   >
                     <div>
-                      <div className="font-bold text-gray-900">{inst.symbol}</div>
+                      <div className="font-bold text-gray-900 text-sm">{inst.symbol}</div>
                       <div className="text-xs text-gray-400">{inst.exchange}</div>
                     </div>
                     <div className="text-right">
-                      <div className="font-semibold text-gray-900">
-                        ${inst.price.toLocaleString()}
+                      <div className="font-semibold text-gray-900 text-sm">
+                        ${inst.price.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                       </div>
                       <div className={`text-xs font-semibold ${getChangeColor(inst.change_24h)}`}>
                         {inst.change_24h >= 0 ? '+' : ''}{inst.change_24h.toFixed(2)}%
@@ -148,11 +241,11 @@ export default function MarketDataPage() {
             </div>
           </div>
 
-          {/* Quote Detail */}
-          <div className="lg:col-span-2">
+          {/* Detail Panel */}
+          <div className="lg:col-span-3">
             {quote ? (
               <div className="space-y-4">
-                {/* Main Quote */}
+                {/* Quote header */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div>
@@ -170,7 +263,7 @@ export default function MarketDataPage() {
                     ${quote.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-3 gap-4">
                     <div className="bg-green-50 rounded-lg p-4">
                       <div className="text-xs text-gray-500 mb-1">Bid</div>
                       <div className="text-xl font-bold text-green-600">
@@ -183,78 +276,142 @@ export default function MarketDataPage() {
                         ${quote.ask.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </div>
                     </div>
-                  </div>
-                </div>
-
-                {/* Stats */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-                    <div className="text-sm text-gray-500 mb-2">Spread</div>
-                    <div className="text-2xl font-bold text-gray-900">
-                      ${(quote.ask - quote.bid).toFixed(4)}
-                    </div>
-                    <div className="text-xs text-gray-400">
-                      {(((quote.ask - quote.bid) / quote.price) * 100).toFixed(4)}%
-                    </div>
-                  </div>
-                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-                    <div className="text-sm text-gray-500 mb-2">Volume 24h</div>
-                    <div className="text-2xl font-bold text-gray-900">
-                      ${(quote.volume_24h / 1_000_000).toFixed(2)}M
-                    </div>
-                    <div className="text-xs text-gray-400">USD equivalent</div>
-                  </div>
-                </div>
-
-                {/* Price History Chart */}
-                {priceHistory.length > 1 && (
-                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-                    <div className="text-sm font-semibold text-gray-700 mb-3">Price History (live)</div>
-                    <ResponsiveContainer width="100%" height={160}>
-                      <LineChart data={priceHistory} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="time"
-                          tick={{ fontSize: 10, fill: '#9ca3af' }}
-                          interval="preserveStartEnd"
-                          tickLine={false}
-                        />
-                        <YAxis
-                          domain={['auto', 'auto']}
-                          tick={{ fontSize: 10, fill: '#9ca3af' }}
-                          tickLine={false}
-                          axisLine={false}
-                          width={70}
-                          tickFormatter={(v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                        />
-                        <Tooltip
-                          formatter={(v: number) => [`$${v.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Price']}
-                          labelStyle={{ fontSize: 11 }}
-                          contentStyle={{ fontSize: 12 }}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="price"
-                          stroke={quote.change_24h >= 0 ? '#16a34a' : '#dc2626'}
-                          strokeWidth={2}
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-
-                {/* Subscribed Info */}
-                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5">
-                  <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
-                    <div>
-                      <div className="font-semibold text-indigo-900">Live Data Feed</div>
-                      <div className="text-sm text-indigo-700">
-                        Subscribed to {quote.symbol} — updates every 3 seconds
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="text-xs text-gray-500 mb-1">Volume 24h</div>
+                      <div className="text-xl font-bold text-gray-800">
+                        ${(quote.volume_24h / 1_000_000).toFixed(2)}M
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                {/* Tabs */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                  <div className="flex border-b border-gray-100">
+                    <button
+                      onClick={() => setActiveTab('live')}
+                      className={`px-6 py-3 text-sm font-semibold transition-colors ${
+                        activeTab === 'live'
+                          ? 'border-b-2 border-indigo-500 text-indigo-600'
+                          : 'text-gray-500 hover:text-gray-800'
+                      }`}
+                    >
+                      Live Price
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('ohlcv')}
+                      className={`px-6 py-3 text-sm font-semibold transition-colors ${
+                        activeTab === 'ohlcv'
+                          ? 'border-b-2 border-indigo-500 text-indigo-600'
+                          : 'text-gray-500 hover:text-gray-800'
+                      }`}
+                    >
+                      OHLCV Chart
+                    </button>
+                  </div>
+
+                  <div className="p-5">
+                    {activeTab === 'live' ? (
+                      priceHistory.length > 1 ? (
+                        <>
+                          <div className="text-sm font-semibold text-gray-700 mb-3">
+                            Price History (live · updates every 3s)
+                          </div>
+                          <ResponsiveContainer width="100%" height={200}>
+                            <ComposedChart data={priceHistory} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#9ca3af' }} interval="preserveStartEnd" tickLine={false} />
+                              <YAxis domain={['auto', 'auto']} tick={{ fontSize: 10, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={75}
+                                tickFormatter={(v: number) => `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} />
+                              <Tooltip formatter={(v: number) => [`$${v.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Price']} />
+                              <Line type="monotone" dataKey="price" stroke={quote.change_24h >= 0 ? '#16a34a' : '#dc2626'} strokeWidth={2} dot={false} isAnimationActive={false} />
+                            </ComposedChart>
+                          </ResponsiveContainer>
+                          <div className="flex items-center gap-2 mt-3">
+                            <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+                            <span className="text-xs text-indigo-600">Live — {priceHistory.length} data points</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-center py-8 text-gray-400">
+                          <div className="text-3xl mb-2">📈</div>
+                          Collecting live price data...
+                        </div>
+                      )
+                    ) : (
+                      <>
+                        {/* Interval selector + export */}
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex gap-1">
+                            {INTERVALS.map(iv => (
+                              <button
+                                key={iv}
+                                onClick={() => setIntervalVal(iv)}
+                                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                                  interval === iv
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                }`}
+                              >
+                                {iv}
+                              </button>
+                            ))}
+                          </div>
+                          <button
+                            onClick={handleExportCsv}
+                            className="px-3 py-1.5 text-xs font-semibold bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
+                          >
+                            ↓ Export CSV
+                          </button>
+                        </div>
+
+                        {loadingOhlcv ? (
+                          <div className="text-center py-8 text-gray-400">Loading OHLCV data...</div>
+                        ) : candleData.length > 0 ? (
+                          <>
+                            {/* OHLCV composed chart: low→high range bar + close line */}
+                            <div className="text-sm font-semibold text-gray-700 mb-2">
+                              {quote.symbol} · {interval.toUpperCase()} · {candleData.length} bars
+                            </div>
+                            <ResponsiveContainer width="100%" height={260}>
+                              <ComposedChart data={candleData} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#9ca3af' }} interval={Math.floor(candleData.length / 8)} tickLine={false} />
+                                <YAxis domain={['auto', 'auto']} tick={{ fontSize: 9, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={75}
+                                  tickFormatter={(v: number) => `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} />
+                                <Tooltip content={<CandlestickTooltip />} />
+                                {/* High-low wick */}
+                                <Bar dataKey="wickTop" stackId="wick" fill="transparent" stroke="transparent" barSize={1} />
+                                {/* Body */}
+                                <Bar dataKey="bodySize" stackId="body" barSize={4}>
+                                  {candleData.map((entry, index) => (
+                                    <Cell key={index} fill={entry.bullish ? '#16a34a' : '#dc2626'} />
+                                  ))}
+                                </Bar>
+                                {/* Close price line */}
+                                <Line type="monotone" dataKey="close" stroke="#6366f1" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                              </ComposedChart>
+                            </ResponsiveContainer>
+
+                            {/* Volume bars */}
+                            <div className="mt-3">
+                              <div className="text-xs text-gray-500 mb-1">Volume</div>
+                              <ResponsiveContainer width="100%" height={60}>
+                                <ComposedChart data={candleData} margin={{ top: 0, right: 8, bottom: 0, left: 8 }}>
+                                  <Bar dataKey="volume" barSize={3}>
+                                    {candleData.map((entry, index) => (
+                                      <Cell key={index} fill={entry.bullish ? '#86efac' : '#fca5a5'} />
+                                    ))}
+                                  </Bar>
+                                </ComposedChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-center py-8 text-gray-400">No OHLCV data available</div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

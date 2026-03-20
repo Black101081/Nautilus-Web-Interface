@@ -269,6 +269,12 @@ async def connect_adapter(adapter_id: str, req: AdapterConnectRequest, _admin: d
                 _logging.getLogger(__name__).warning(
                     "TradingNode start failed for bybit: %s", node_exc,
                 )
+        elif adapter_id == "okx":
+            result = await live_manager.connect_okx(api_key, api_secret)
+            connection_id = result.get("connection_id")
+        elif adapter_id == "dydx":
+            result = await live_manager.connect_dydx(api_key, api_secret)
+            connection_id = result.get("connection_id")
         # Other adapters: store credentials only (no live node yet)
 
         import json

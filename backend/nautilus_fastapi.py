@@ -28,13 +28,16 @@ from auth_jwt import decode_token
 from routers import (
     adapters,
     alerts,
+    analytics,
     auth as auth_router_module,
     backtest,
+    catalog,
     components,
     database_ops,
     market_data,
     orders,
     positions,
+    reports,
     risk,
     strategies,
     system,
@@ -314,6 +317,9 @@ app.include_router(adapters.router)
 app.include_router(database_ops.router)
 app.include_router(components.router)
 app.include_router(users.router)
+app.include_router(analytics.router)
+app.include_router(catalog.router)
+app.include_router(reports.router)
 
 
 # ── Root endpoint ─────────────────────────────────────────────────────────────

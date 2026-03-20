@@ -270,6 +270,38 @@ export default function TraderDashboard() {
             </CardContent>
           </Card>
 
+          {/* Analytics Card */}
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardHeader>
+              <CardTitle>📊 Analytics</CardTitle>
+              <CardDescription>Walk-forward, correlation & sizing</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Walk-forward analysis, return correlation matrix, equity curve, and Kelly position sizing.
+              </p>
+              <Button className="w-full bg-indigo-700 hover:bg-indigo-800" onClick={() => window.location.href = '/trader/analytics'}>
+                Open Analytics
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Data Catalog Card */}
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardHeader>
+              <CardTitle>🗄️ Data Catalog</CardTitle>
+              <CardDescription>Import & export datasets</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Import CSV/Parquet market data, export OHLCV bars, and manage historical datasets.
+              </p>
+              <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={() => window.location.href = '/trader/catalog'}>
+                Data Catalog
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* Documentation Card */}
           <Card className="hover:shadow-lg transition-shadow">
             <CardHeader>

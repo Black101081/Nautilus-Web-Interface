@@ -261,6 +261,114 @@ class LiveTradingManager:
                 "account_info": account_info,
             }
 
+    # ── OKX connection ─────────────────────────────────────────────────────────
+
+    async def connect_okx(self, api_key: str, api_secret: str) -> Dict[str, Any]:
+        """
+        Connect OKX adapter.
+        Verifies credentials via OKX REST account endpoint (GET /api/v5/account/balance).
+        """
+        async with self._lock:
+            if not api_key or not api_secret:
+                raise ConnectionError("api_key and api_secret are required for OKX")
+
+            import hashlib, hmac, base64, time as _time
+            import httpx
+
+            verified = False
+            account_info: Dict[str, Any] = {}
+            try:
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                method = "GET"
+                path = "/api/v5/account/balance"
+                msg = ts + method + path
+                sig = base64.b64encode(
+                    hmac.new(api_secret.encode(), msg.encode(), hashlib.sha256).digest()
+                ).decode()
+                headers = {
+                    "OK-ACCESS-KEY": api_key,
+                    "OK-ACCESS-SIGN": sig,
+                    "OK-ACCESS-TIMESTAMP": ts,
+                    "OK-ACCESS-PASSPHRASE": "",  # passphrase optional at validation stage
+                    "Content-Type": "application/json",
+                }
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    resp = await client.get("https://www.okx.com" + path, headers=headers)
+                # OKX returns 401/403 on bad credentials; 200 with code 0 = success
+                if resp.status_code in (401, 403):
+                    raise ConnectionError(f"OKX rejected credentials: HTTP {resp.status_code}")
+                if resp.status_code == 200:
+                    body = resp.json()
+                    if body.get("code") == "0":
+                        verified = True
+                        account_info = {"data": body.get("data", [])}
+            except ConnectionError:
+                raise
+            except Exception:
+                pass  # network error → connected_offline
+
+            connection_id = f"CONN-OKX-{uuid.uuid4().hex[:8].upper()}"
+            status = "connected" if verified else "connected_offline"
+            self._connections["okx"] = AdapterConnection(
+                adapter_id="okx",
+                connection_id=connection_id,
+                status=status,
+            )
+            self._is_active = True
+            return {
+                "success": True,
+                "connection_id": connection_id,
+                "verified": verified,
+                "account_info": account_info,
+            }
+
+    # ── dYdX connection ────────────────────────────────────────────────────────
+
+    async def connect_dydx(self, api_key: str, api_secret: str) -> Dict[str, Any]:
+        """
+        Connect dYdX adapter.
+        Verifies credentials via dYdX v4 REST endpoint GET /v4/addresses/{address}.
+        api_key here is treated as the dYdX wallet address; api_secret as private key prefix.
+        """
+        async with self._lock:
+            if not api_key or not api_secret:
+                raise ConnectionError("api_key (address) and api_secret are required for dYdX")
+
+            import httpx
+
+            verified = False
+            account_info: Dict[str, Any] = {}
+            try:
+                # dYdX v4 public endpoint to check address
+                url = f"https://indexer.dydx.trade/v4/addresses/{api_key}"
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    resp = await client.get(url)
+                if resp.status_code == 200:
+                    verified = True
+                    account_info = resp.json()
+                elif resp.status_code in (400, 404):
+                    # Address not found / invalid — treat as auth error
+                    raise ConnectionError(f"dYdX address not found or invalid: {api_key}")
+            except ConnectionError:
+                raise
+            except Exception:
+                pass  # network error → connected_offline
+
+            connection_id = f"CONN-DYDX-{uuid.uuid4().hex[:8].upper()}"
+            status = "connected" if verified else "connected_offline"
+            self._connections["dydx"] = AdapterConnection(
+                adapter_id="dydx",
+                connection_id=connection_id,
+                status=status,
+            )
+            self._is_active = True
+            return {
+                "success": True,
+                "connection_id": connection_id,
+                "verified": verified,
+                "account_info": account_info,
+            }
+
     async def disconnect(self, adapter_id: str) -> Dict[str, Any]:
         async with self._lock:
             conn = self._connections.get(adapter_id)
