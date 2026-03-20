@@ -94,6 +94,37 @@ async def _purge_expired_tokens_loop() -> None:
             pass
 
 
+async def _auto_restore_live_node() -> None:
+    """
+    On startup, reconnect any adapter that was 'connected' before the last
+    server restart.  Credentials are decrypted from the DB and passed directly
+    to live_node.connect().  Failures are non-fatal — we just log a warning.
+    """
+    if os.getenv("NAUTILUS_DISABLE_LIVE_NODE") or os.getenv("TESTING"):
+        return
+    try:
+        connected = await database.get_connected_adapters()
+    except Exception as exc:
+        print(f"[live_node] Could not query connected adapters: {exc}", file=sys.stderr)
+        return
+    for cfg in connected:
+        adapter_id = cfg["adapter_id"]
+        try:
+            print(f"[live_node] Auto-restoring adapter '{adapter_id}' …", file=sys.stderr)
+            await live_node.connect(
+                adapter_type=adapter_id,
+                api_key=cfg["api_key"],
+                api_secret=cfg["api_secret"],
+                testnet=False,
+            )
+            print(f"[live_node] Adapter '{adapter_id}' restored successfully.", file=sys.stderr)
+        except Exception as exc:
+            print(
+                f"[live_node] Auto-restore failed for '{adapter_id}': {exc}",
+                file=sys.stderr,
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: check secrets before anything else
@@ -103,11 +134,17 @@ async def lifespan(app: FastAPI):
     # Restore persisted strategies and component states
     await load_strategies_from_db()
     await load_component_states()
+    # Auto-restore TradingNode connections from previous session
+    await _auto_restore_live_node()
     # Start background tasks
     alert_task = asyncio.create_task(run_alert_monitor())
     purge_task = asyncio.create_task(_purge_expired_tokens_loop())
     yield
-    # Shutdown: cancel background tasks
+    # Shutdown: stop TradingNode cleanly, then cancel background tasks
+    try:
+        await live_node._stop_node()
+    except Exception as exc:
+        print(f"[live_node] Shutdown error: {exc}", file=sys.stderr)
     for task in (alert_task, purge_task):
         task.cancel()
         try:

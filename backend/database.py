@@ -710,6 +710,31 @@ async def has_connected_adapter() -> bool:
     return (row[0] if row else 0) > 0
 
 
+async def get_connected_adapters() -> List[Dict[str, Any]]:
+    """
+    Return all adapters with status='connected' and their decrypted credentials.
+    Used on startup to auto-restore TradingNode connections.
+    """
+    from credential_utils import decrypt_credential
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT adapter_id, api_key, api_secret FROM adapter_configs WHERE status='connected'"
+        ) as cur:
+            rows = await cur.fetchall()
+    result = []
+    for row in rows:
+        api_key = decrypt_credential(row["api_key"] or "") if row["api_key"] else ""
+        api_secret = decrypt_credential(row["api_secret"] or "") if row["api_secret"] else ""
+        if api_key and api_secret:
+            result.append({
+                "adapter_id": row["adapter_id"],
+                "api_key": api_key,
+                "api_secret": api_secret,
+            })
+    return result
+
+
 # ── Risk helpers ───────────────────────────────────────────────────────────────
 
 async def get_daily_realized_loss() -> float:
