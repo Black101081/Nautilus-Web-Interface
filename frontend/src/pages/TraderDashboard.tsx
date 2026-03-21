@@ -1,399 +1,367 @@
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { useNotification } from "@/contexts/NotificationContext";
-import nautilusService from '@/services/nautilusService';
-import { useWebSocket } from '@/hooks/useWebSocket';
+import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import nautilusService from "@/services/nautilusService";
+import api from "@/lib/api";
+import {
+  LineChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+} from "recharts";
+
+interface EngineInfo {
+  trader_id?: string;
+  engine_type?: string;
+  status?: string;
+  is_running?: boolean;
+  strategies_count?: number;
+}
+
+interface RiskMetrics {
+  total_exposure?: number;
+  margin_used?: number;
+  margin_available?: number;
+  max_drawdown?: number;
+  var_1d?: number;
+  position_count?: number;
+}
 
 export default function TraderDashboard() {
-  const { success, error: showError } = useNotification();
+  const [, navigate] = useLocation();
   const { connected: wsConnected, lastMessage } = useWebSocket();
-  const [engineInfo, setEngineInfo] = useState<any>(null);
-  const [components, setComponents] = useState<any[]>([]);
-  const [riskMetrics, setRiskMetrics] = useState<any>(null);
+  const [engineInfo, setEngineInfo] = useState<EngineInfo | null>(null);
+  const [riskMetrics, setRiskMetrics] = useState<RiskMetrics | null>(null);
+  const [equityCurve, setEquityCurve] = useState<{ t: string; v: number }[]>([]);
+  const [liveStrategies, setLiveStrategies] = useState(0);
+  const [livePositions, setLivePositions] = useState(0);
   const [loading, setLoading] = useState(true);
-  // Live counters from WebSocket (update every 3s without extra HTTP)
-  const [liveStrategiesCount, setLiveStrategiesCount] = useState<number | null>(null);
-  const [livePositionsCount, setLivePositionsCount] = useState<number | null>(null);
 
   useEffect(() => {
-    loadDashboardData();
-    // Full refresh every 30s; WebSocket keeps counts fresh in between
-    const interval = setInterval(loadDashboardData, 30_000);
-    return () => clearInterval(interval);
+    load();
+    const id = setInterval(load, 30_000);
+    return () => clearInterval(id);
   }, []);
 
-  // Consume WebSocket live_data push
   useEffect(() => {
-    if (lastMessage?.type === 'live_data') {
-      if (lastMessage.engine?.strategies_count !== undefined) {
-        setLiveStrategiesCount(lastMessage.engine.strategies_count);
-      }
-      if (lastMessage.open_positions_count !== undefined) {
-        setLivePositionsCount(lastMessage.open_positions_count);
-      }
+    if (lastMessage?.type === "live_data") {
+      if (lastMessage.engine?.strategies_count !== undefined)
+        setLiveStrategies(lastMessage.engine.strategies_count);
+      if (lastMessage.open_positions_count !== undefined)
+        setLivePositions(lastMessage.open_positions_count);
     }
   }, [lastMessage]);
 
-  const loadDashboardData = async () => {
+  const load = async () => {
     try {
-      const [engine, comps, risk] = await Promise.all([
+      const [engine, risk] = await Promise.all([
         nautilusService.getEngineInfo(),
-        nautilusService.getComponents(),
-        nautilusService.getRiskMetrics()
+        nautilusService.getRiskMetrics(),
       ]);
       setEngineInfo(engine);
-      setComponents(comps);
       setRiskMetrics(risk);
-      setLoading(false);
-    } catch (err) {
-      console.error('Failed to load dashboard data:', err);
+
+      // Try to get equity curve
+      try {
+        const perfData = await api.get<{ curve?: { timestamp: string; equity: number }[] }>(
+          "/api/analytics/equity-curve"
+        );
+        if (Array.isArray(perfData?.curve)) {
+          setEquityCurve(
+            perfData.curve.slice(-50).map((p) => ({
+              t: p.timestamp,
+              v: p.equity,
+            }))
+          );
+        }
+      } catch {
+        /* no chart data yet */
+      }
+    } catch {
+      /* silent */
+    } finally {
       setLoading(false);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      'running': 'bg-green-500',
-      'active': 'bg-green-500',
-      'stopped': 'bg-red-500',
-      'paused': 'bg-yellow-500',
-      'error': 'bg-red-500'
-    };
-    return colors[status.toLowerCase()] || 'bg-gray-500';
-  };
+  const drawdown = riskMetrics?.max_drawdown ?? 0;
+  const marginPct =
+    riskMetrics && (riskMetrics.margin_used ?? 0) + (riskMetrics.margin_available ?? 0) > 0
+      ? ((riskMetrics.margin_used ?? 0) /
+          ((riskMetrics.margin_used ?? 0) + (riskMetrics.margin_available ?? 0))) *
+        100
+      : 0;
+
+  const riskLevel =
+    drawdown > 15 || marginPct > 80
+      ? "critical"
+      : drawdown > 8 || marginPct > 60
+      ? "warning"
+      : "ok";
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-500">
+        Loading…
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-blue-600 to-blue-800 text-white">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold">📈 Nautilus Trader Panel</h1>
-              <p className="text-blue-100 mt-1">Professional algorithmic trading platform</p>
+    <div className="p-6 space-y-6">
+      {/* Risk Alert Banner */}
+      {riskLevel !== "ok" && (
+        <div
+          className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
+            riskLevel === "critical"
+              ? "bg-red-900/40 border border-red-700 text-red-300"
+              : "bg-yellow-900/40 border border-yellow-700 text-yellow-300"
+          }`}
+        >
+          <span>{riskLevel === "critical" ? "🚨" : "⚠️"}</span>
+          <span>
+            {riskLevel === "critical"
+              ? `Critical risk level: drawdown ${drawdown.toFixed(1)}%, margin ${marginPct.toFixed(0)}% used`
+              : `Elevated risk: drawdown ${drawdown.toFixed(1)}%, margin ${marginPct.toFixed(0)}% used`}
+          </span>
+          <button
+            className="ml-auto underline opacity-80 hover:opacity-100"
+            onClick={() => navigate("/trader/risk")}
+          >
+            View Risk
+          </button>
+        </div>
+      )}
+
+      {/* KPI Row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <KpiCard
+          label="Active Strategies"
+          value={liveStrategies}
+          suffix={wsConnected ? "● live" : ""}
+          color="blue"
+          onClick={() => navigate("/trader/strategies")}
+        />
+        <KpiCard
+          label="Open Positions"
+          value={livePositions}
+          suffix={wsConnected ? "● live" : ""}
+          color="green"
+          onClick={() => navigate("/trader/positions")}
+        />
+        <KpiCard
+          label="Total Exposure"
+          value={`$${(riskMetrics?.total_exposure ?? 0).toLocaleString()}`}
+          color="orange"
+          onClick={() => navigate("/trader/risk")}
+        />
+        <KpiCard
+          label="Max Drawdown"
+          value={`${drawdown.toFixed(2)}%`}
+          color={drawdown > 10 ? "red" : "gray"}
+          onClick={() => navigate("/trader/performance")}
+        />
+      </div>
+
+      {/* Equity Chart + Quick Actions */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Equity mini chart */}
+        <div className="lg:col-span-2 bg-gray-900 rounded-xl border border-gray-800 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-300">Equity Curve</h3>
+            <button
+              className="text-xs text-blue-400 hover:text-blue-300"
+              onClick={() => navigate("/trader/performance")}
+            >
+              Full view →
+            </button>
+          </div>
+          {equityCurve.length > 1 ? (
+            <ResponsiveContainer width="100%" height={120}>
+              <LineChart data={equityCurve}>
+                <Line
+                  type="monotone"
+                  dataKey="v"
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  dot={false}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#1f2937",
+                    border: "1px solid #374151",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    color: "#e5e7eb",
+                  }}
+                  formatter={(v: number) => [`$${v.toLocaleString()}`, "Equity"]}
+                  labelFormatter={() => ""}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[120px] flex items-center justify-center text-gray-600 text-sm">
+              No equity data yet — run some trades first
             </div>
-            <div className="flex items-center gap-4">
-              {engineInfo && (
-                <div className="flex items-center gap-2 bg-white/10 px-4 py-2 rounded-lg">
-                  <div className={`w-2 h-2 rounded-full ${engineInfo.is_running ? 'bg-green-400' : 'bg-red-400'} animate-pulse`}></div>
-                  <div>
-                    <div className="text-xs text-blue-100">Status</div>
-                    <div className="font-semibold">{engineInfo.is_running ? 'Live' : 'Stopped'}</div>
-                  </div>
-                </div>
-              )}
-              <div className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full ${wsConnected ? 'bg-green-500/20 text-green-200' : 'bg-red-500/20 text-red-200'}`}>
-                <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
-                {wsConnected ? 'WS Live' : 'WS Off'}
+          )}
+        </div>
+
+        {/* Quick Actions */}
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+          <h3 className="text-sm font-semibold text-gray-300 mb-3">Quick Actions</h3>
+          <div className="space-y-2">
+            <ActionBtn
+              label="New Order"
+              icon="📋"
+              color="green"
+              onClick={() => navigate("/trader/orders")}
+            />
+            <ActionBtn
+              label="Start Strategy"
+              icon="⚡"
+              color="blue"
+              onClick={() => navigate("/trader/strategies")}
+            />
+            <ActionBtn
+              label="Run Backtest"
+              icon="🔬"
+              color="purple"
+              onClick={() => navigate("/trader/backtesting")}
+            />
+            <ActionBtn
+              label="Risk Dashboard"
+              icon="⚖️"
+              color="red"
+              onClick={() => navigate("/trader/risk")}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Navigation Cards Grid */}
+      <div>
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">
+          All Sections
+        </h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {[
+            { path: "/trader/market-data", icon: "📊", label: "Market Data" },
+            { path: "/trader/alerts", icon: "🔔", label: "Alerts" },
+            { path: "/trader/strategies", icon: "⚡", label: "Strategies" },
+            { path: "/trader/orders", icon: "📋", label: "Orders" },
+            { path: "/trader/positions", icon: "💼", label: "Positions" },
+            { path: "/trader/risk", icon: "⚖️", label: "Risk" },
+            { path: "/trader/performance", icon: "📈", label: "Performance" },
+            { path: "/trader/analytics", icon: "🔬", label: "Analytics" },
+            { path: "/trader/backtesting", icon: "🕐", label: "Backtesting" },
+            { path: "/trader/catalog", icon: "🗄️", label: "Data Catalog" },
+          ].map((item) => (
+            <button
+              key={item.path}
+              onClick={() => navigate(item.path)}
+              className="bg-gray-900 hover:bg-gray-800 border border-gray-800 hover:border-gray-700 rounded-xl p-4 text-center transition-all"
+            >
+              <div className="text-2xl mb-1">{item.icon}</div>
+              <div className="text-xs text-gray-400">{item.label}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Engine Info */}
+      {engineInfo && (
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+          <h3 className="text-sm font-semibold text-gray-300 mb-3">Engine</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <div className="text-xs text-gray-600 mb-0.5">Trader ID</div>
+              <div className="text-gray-300 font-mono text-xs truncate">
+                {engineInfo.trader_id ?? "—"}
               </div>
-              <Button onClick={() => window.location.href = '/'} variant="outline" className="bg-white text-blue-600">
-                ← Home
-              </Button>
+            </div>
+            <div>
+              <div className="text-xs text-gray-600 mb-0.5">Type</div>
+              <div className="text-gray-300 text-xs">{engineInfo.engine_type ?? "—"}</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-600 mb-0.5">Status</div>
+              <div
+                className={`text-xs font-semibold ${
+                  engineInfo.is_running ? "text-green-400" : "text-red-400"
+                }`}
+              >
+                {engineInfo.status ?? "Unknown"}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-600 mb-0.5">VaR (1D)</div>
+              <div className="text-gray-300 text-xs">
+                ${(riskMetrics?.var_1d ?? 0).toLocaleString()}
+              </div>
             </div>
           </div>
         </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        {/* Engine Status */}
-        {engineInfo && (
-          <Card className="mb-6 border-blue-200">
-            <CardHeader className="bg-blue-50">
-              <CardTitle className="flex items-center gap-2">
-                <span className={`w-3 h-3 rounded-full ${engineInfo.is_running ? 'bg-green-500' : 'bg-red-500'} animate-pulse`}></span>
-                Trading Engine: {engineInfo.trader_id}
-              </CardTitle>
-              <CardDescription>
-                {engineInfo.engine_type} | Status: {engineInfo.status}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-blue-600">
-                    {liveStrategiesCount ?? engineInfo.strategies_count ?? 0}
-                    {wsConnected && <span className="text-xs text-green-500 ml-1">●</span>}
-                  </div>
-                  <div className="text-sm text-gray-600">Active Strategies</div>
-                </div>
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-green-600">{components.filter(c => c.status === 'running' || c.status === 'active').length}</div>
-                  <div className="text-sm text-gray-600">Components Online</div>
-                </div>
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-purple-600">
-                    {livePositionsCount ?? riskMetrics?.position_count ?? 0}
-                    {wsConnected && <span className="text-xs text-green-500 ml-1">●</span>}
-                  </div>
-                  <div className="text-sm text-gray-600">Open Positions</div>
-                </div>
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-orange-600">
-                    ${(riskMetrics?.total_exposure || 0).toLocaleString()}
-                  </div>
-                  <div className="text-sm text-gray-600">Total Exposure</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Trading Features Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {/* Strategies Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>📈 Strategies</CardTitle>
-              <CardDescription>Manage trading strategies</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Create, configure, and monitor your algorithmic trading strategies.
-              </p>
-              <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={() => window.location.href = '/trader/strategies'}>
-                Manage Strategies
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Orders Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>📋 Orders</CardTitle>
-              <CardDescription>Order management</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Create, modify, and cancel orders. View order history and execution details.
-              </p>
-              <Button className="w-full bg-green-600 hover:bg-green-700" onClick={() => window.location.href = '/trader/orders'}>
-                Manage Orders
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Positions Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>💼 Positions</CardTitle>
-              <CardDescription>Position tracking</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Monitor open positions, P&L, and position sizing across all instruments.
-              </p>
-              <Button className="w-full bg-purple-600 hover:bg-purple-700" onClick={() => window.location.href = '/trader/positions'}>
-                View Positions
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Risk Management Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>⚖️ Risk Management</CardTitle>
-              <CardDescription>Risk controls & limits</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Configure risk limits, monitor exposure, and manage risk parameters.
-              </p>
-              <Button className="w-full bg-red-600 hover:bg-red-700" onClick={() => window.location.href = '/trader/risk'}>
-                Risk Dashboard
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Market Data Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>📊 Market Data</CardTitle>
-              <CardDescription>Real-time market feeds</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Subscribe to market data, view quotes, and analyze market conditions.
-              </p>
-              <Button className="w-full bg-indigo-600 hover:bg-indigo-700" onClick={() => window.location.href = '/trader/market-data'}>
-                Market Data
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Performance Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>📉 Performance</CardTitle>
-              <CardDescription>Analytics & reporting</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Analyze trading performance, view P&L reports, and track metrics.
-              </p>
-              <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => window.location.href = '/trader/performance'}>
-                View Analytics
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Alerts Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>🔔 Alerts</CardTitle>
-              <CardDescription>Notifications & alerts</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Configure price alerts, system notifications, and trading signals.
-              </p>
-              <Button className="w-full bg-yellow-600 hover:bg-yellow-700" onClick={() => window.location.href = '/trader/alerts'}>
-                Manage Alerts
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Backtesting Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>🔬 Backtesting</CardTitle>
-              <CardDescription>Strategy testing</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Test strategies on historical data and analyze backtest results.
-              </p>
-              <Button className="w-full bg-cyan-600 hover:bg-cyan-700" onClick={() => window.location.href = '/trader/backtesting'}>
-                Run Backtest
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Analytics Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>📊 Analytics</CardTitle>
-              <CardDescription>Walk-forward, correlation & sizing</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Walk-forward analysis, return correlation matrix, equity curve, and Kelly position sizing.
-              </p>
-              <Button className="w-full bg-indigo-700 hover:bg-indigo-800" onClick={() => window.location.href = '/trader/analytics'}>
-                Open Analytics
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Data Catalog Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>🗄️ Data Catalog</CardTitle>
-              <CardDescription>Import & export datasets</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Import CSV/Parquet market data, export OHLCV bars, and manage historical datasets.
-              </p>
-              <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={() => window.location.href = '/trader/catalog'}>
-                Data Catalog
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Documentation Card */}
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <CardTitle>📚 Documentation</CardTitle>
-              <CardDescription>Help & guides</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Access trading guides, API documentation, and tutorials.
-              </p>
-              <Button className="w-full bg-gray-600 hover:bg-gray-700" onClick={() => window.location.href = '/docs'}>
-                View Docs
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* System Components Status */}
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>🔧 System Components</CardTitle>
-            <CardDescription>Real-time component status</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {components.map((component) => (
-                <div key={component.id} className="flex items-center gap-3 p-3 border rounded-lg">
-                  <div className={`w-3 h-3 rounded-full ${getStatusColor(component.status)}`}></div>
-                  <div className="flex-1">
-                    <div className="font-semibold text-sm">{component.name}</div>
-                    <div className="text-xs text-gray-500">{component.type}</div>
-                  </div>
-                  <div className="text-xs px-2 py-1 bg-gray-100 rounded">
-                    {component.status}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Risk Metrics */}
-        {riskMetrics && (
-          <Card className="mt-6 border-orange-200">
-            <CardHeader className="bg-orange-50">
-              <CardTitle>⚠️ Risk Metrics</CardTitle>
-              <CardDescription>Current risk exposure and limits</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                <div className="text-center">
-                  <div className="text-lg font-bold text-orange-600">
-                    ${(riskMetrics.total_exposure || 0).toLocaleString()}
-                  </div>
-                  <div className="text-xs text-gray-600">Total Exposure</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-bold text-blue-600">
-                    ${(riskMetrics.margin_used || 0).toLocaleString()}
-                  </div>
-                  <div className="text-xs text-gray-600">Margin Used</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-bold text-green-600">
-                    ${(riskMetrics.margin_available || 0).toLocaleString()}
-                  </div>
-                  <div className="text-xs text-gray-600">Available Margin</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-bold text-red-600">
-                    {(riskMetrics.max_drawdown || 0).toFixed(2)}%
-                  </div>
-                  <div className="text-xs text-gray-600">Max Drawdown</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-bold text-purple-600">
-                    ${(riskMetrics.var_1d || 0).toLocaleString()}
-                  </div>
-                  <div className="text-xs text-gray-600">VaR (1D)</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-bold text-indigo-600">
-                    {riskMetrics.position_count || 0}
-                  </div>
-                  <div className="text-xs text-gray-600">Positions</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </main>
+      )}
     </div>
   );
 }
 
+function KpiCard({
+  label,
+  value,
+  suffix,
+  color,
+  onClick,
+}: {
+  label: string;
+  value: string | number;
+  suffix?: string;
+  color: "blue" | "green" | "orange" | "red" | "gray";
+  onClick?: () => void;
+}) {
+  const colorMap = {
+    blue: "text-blue-400",
+    green: "text-green-400",
+    orange: "text-orange-400",
+    red: "text-red-400",
+    gray: "text-gray-400",
+  };
+  return (
+    <button
+      onClick={onClick}
+      className="bg-gray-900 hover:bg-gray-800 border border-gray-800 rounded-xl p-4 text-left transition-all"
+    >
+      <div className="text-xs text-gray-500 mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${colorMap[color]}`}>{value}</div>
+      {suffix && <div className="text-xs text-green-500 mt-0.5">{suffix}</div>}
+    </button>
+  );
+}
+
+function ActionBtn({
+  label,
+  icon,
+  color,
+  onClick,
+}: {
+  label: string;
+  icon: string;
+  color: "green" | "blue" | "purple" | "red";
+  onClick?: () => void;
+}) {
+  const colorMap = {
+    green: "bg-green-700/20 hover:bg-green-700/40 text-green-400 border-green-800",
+    blue: "bg-blue-700/20 hover:bg-blue-700/40 text-blue-400 border-blue-800",
+    purple: "bg-purple-700/20 hover:bg-purple-700/40 text-purple-400 border-purple-800",
+    red: "bg-red-700/20 hover:bg-red-700/40 text-red-400 border-red-800",
+  };
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${colorMap[color]}`}
+    >
+      <span>{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}

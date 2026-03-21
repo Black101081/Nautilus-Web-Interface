@@ -220,27 +220,15 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="p-6 flex items-center justify-center">
         <p className="text-gray-500 animate-pulse">Loading settings…</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold">System Settings</h1>
-            <Button variant="outline" onClick={() => window.location.href = "/admin"}>
-              ← Back to Dashboard
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-8">
-        <div className="grid md:grid-cols-2 gap-6">
+    <div className="p-6">
+      <div className="grid md:grid-cols-2 gap-6">
           {/* General Settings */}
           <Card>
             <CardHeader>
@@ -367,7 +355,6 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
-      </main>
     </div>
   );
 }

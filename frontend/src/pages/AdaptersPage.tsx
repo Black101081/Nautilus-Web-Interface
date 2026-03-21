@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { useNotification } from '@/contexts/NotificationContext';
-import api from '@/lib/api';
+import { useEffect, useState } from "react";
+import { useNotification } from "@/contexts/NotificationContext";
+import api from "@/lib/api";
 
 interface Adapter {
   id: string;
@@ -12,10 +12,10 @@ interface Adapter {
   docs_url: string;
   supports_live: boolean;
   supports_backtest: boolean;
+  has_credentials?: boolean;
 }
 
-interface AdapterState {
-  connected: boolean;
+interface CredForm {
   apiKey: string;
   apiSecret: string;
   endpoint: string;
@@ -23,310 +23,381 @@ interface AdapterState {
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Crypto: 'bg-yellow-100 text-yellow-700',
-  'Stocks & Futures': 'bg-blue-100 text-blue-700',
-  Data: 'bg-purple-100 text-purple-700',
-  DeFi: 'bg-indigo-100 text-indigo-700',
-  Betting: 'bg-pink-100 text-pink-700',
+  Crypto: "text-yellow-400 bg-yellow-900/30 border-yellow-800",
+  "Stocks & Futures": "text-blue-400 bg-blue-900/30 border-blue-800",
+  Data: "text-purple-400 bg-purple-900/30 border-purple-800",
+  DeFi: "text-indigo-400 bg-indigo-900/30 border-indigo-800",
+  Betting: "text-pink-400 bg-pink-900/30 border-pink-800",
 };
 
-const CATEGORY_ICONS: Record<string, string> = {
-  Crypto: '₿',
-  'Stocks & Futures': '📈',
-  Data: '🗄️',
-  DeFi: '🔗',
-  Betting: '🎰',
-};
+// Wizard steps
+type Step = "choose" | "credentials" | "verify";
 
 export default function AdaptersPage() {
   const { success, info, error: notifyError } = useNotification();
   const [adapters, setAdapters] = useState<Adapter[]>([]);
-  const [states, setStates] = useState<Record<string, AdapterState>>({});
+  const [connected, setConnected] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
-  const [configOpen, setConfigOpen] = useState<string | null>(null);
-  const [testing, setTesting] = useState<string | null>(null);
-  const [filterCategory, setFilterCategory] = useState<string>('All');
+  const [filterCategory, setFilterCategory] = useState("All");
 
-  useEffect(() => {
-    api.get<{ adapters: (Adapter & { status: string; has_credentials: boolean })[] }>('/api/adapters')
-      .then(data => {
-        const list = data.adapters ?? [];
-        setAdapters(list);
-        const initial: Record<string, AdapterState> = {};
-        list.forEach(a => {
-          // Restore connected status and credential hint from backend
-          initial[a.id] = {
-            connected: a.status === 'connected',
-            apiKey: a.has_credentials ? '••••••••' : '',
-            apiSecret: '',
-            endpoint: '',
-            testnet: false,
-          };
-        });
-        setStates(initial);
-      })
-      .catch(() => {
-        notifyError('Could not load adapters from backend');
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  // Wizard state
+  const [wizardAdapter, setWizardAdapter] = useState<Adapter | null>(null);
+  const [wizardStep, setWizardStep] = useState<Step>("choose");
+  const [creds, setCreds] = useState<CredForm>({ apiKey: "", apiSecret: "", endpoint: "", testnet: false });
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
-  const toggleConnect = async (adapter: Adapter) => {
-    const current = states[adapter.id]?.connected ?? false;
-    if (current) {
-      // Disconnect
-      info(`Disconnecting ${adapter.name}…`);
-      try {
-        await api.post(`/api/adapters/${adapter.id}/disconnect`, {});
-        setStates(prev => ({ ...prev, [adapter.id]: { ...prev[adapter.id], connected: false } }));
-        success(`${adapter.name} disconnected`);
-      } catch {
-        notifyError(`Failed to disconnect ${adapter.name}`);
-      }
-    } else {
-      // If no credentials saved yet, open config panel instead
-      const state = states[adapter.id];
-      if (!state?.apiKey || state.apiKey === '••••••••') {
-        setConfigOpen(adapter.id);
-        info(`Enter API credentials for ${adapter.name} first`);
-      } else {
-        // Credentials already in form — connect directly
-        await saveConfig(adapter.id);
-      }
-    }
-  };
+  useEffect(() => { load(); }, []);
 
-  const testConnection = async (adapter: Adapter) => {
-    setTesting(adapter.id);
-    info(`Testing ${adapter.name} connection…`);
+  const load = async () => {
     try {
-      const res = await api.get<{ status: string }>(`/api/adapters/${adapter.id}`);
-      if (res.status === 'connected') {
-        success(`${adapter.name}: connection test passed`);
-      } else {
-        notifyError(`${adapter.name}: not connected – configure API keys first`);
-      }
+      const data = await api.get<{ adapters: (Adapter & { status: string; has_credentials: boolean })[] }>(
+        "/api/adapters"
+      );
+      const list = data.adapters ?? [];
+      setAdapters(list);
+      const connMap: Record<string, boolean> = {};
+      list.forEach((a) => (connMap[a.id] = a.status === "connected"));
+      setConnected(connMap);
     } catch {
-      notifyError(`${adapter.name}: test failed`);
+      notifyError("Could not load adapters");
     } finally {
-      setTesting(null);
+      setLoading(false);
     }
   };
 
-  const saveConfig = async (adapterId: string) => {
-    const state = states[adapterId];
-    const apiKey = state?.apiKey && state.apiKey !== '••••••••' ? state.apiKey : undefined;
-    const apiSecret = state?.apiSecret || undefined;
-
-    if (!apiKey && !apiSecret) {
-      notifyError('Enter at least an API key before connecting');
-      return;
-    }
-
-    info('Connecting…');
+  const disconnect = async (adapter: Adapter) => {
     try {
-      await api.post(`/api/adapters/${adapterId}/connect`, {
-        api_key: apiKey,
-        api_secret: apiSecret || null,
-      });
-      setStates(prev => ({
-        ...prev,
-        [adapterId]: { ...prev[adapterId], connected: true, apiKey: '••••••••', apiSecret: '' },
-      }));
-      setConfigOpen(null);
-      success('Adapter connected and credentials saved');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Connection failed';
-      notifyError(msg);
+      await api.post(`/api/adapters/${adapter.id}/disconnect`, {});
+      setConnected((p) => ({ ...p, [adapter.id]: false }));
+      success(`${adapter.name} disconnected`);
+    } catch {
+      notifyError(`Failed to disconnect ${adapter.name}`);
     }
   };
 
-  const categories = ['All', ...Array.from(new Set(adapters.map(a => a.category)))];
-  const filtered = filterCategory === 'All' ? adapters : adapters.filter(a => a.category === filterCategory);
-  const connectedCount = Object.values(states).filter(s => s.connected).length;
+  const openWizard = (adapter: Adapter) => {
+    setWizardAdapter(adapter);
+    setCreds({ apiKey: "", apiSecret: "", endpoint: "", testnet: false });
+    setTestResult(null);
+    setWizardStep("credentials");
+  };
+
+  const runTest = async () => {
+    if (!wizardAdapter) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await api.post<{ success: boolean; message: string }>(
+        `/api/adapters/${wizardAdapter.id}/test`,
+        { api_key: creds.apiKey, api_secret: creds.apiSecret, endpoint: creds.endpoint, testnet: creds.testnet }
+      );
+      setTestResult({ ok: res.success, msg: res.message });
+    } catch (e) {
+      setTestResult({ ok: false, msg: e instanceof Error ? e.message : "Test failed" });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const connect = async () => {
+    if (!wizardAdapter) return;
+    setConnecting(true);
+    try {
+      await api.post(`/api/adapters/${wizardAdapter.id}/connect`, {
+        api_key: creds.apiKey,
+        api_secret: creds.apiSecret,
+        endpoint: creds.endpoint,
+        testnet: creds.testnet,
+      });
+      setConnected((p) => ({ ...p, [wizardAdapter.id]: true }));
+      success(`${wizardAdapter.name} connected!`);
+      setWizardAdapter(null);
+      info("");
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Connection failed");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const categories = ["All", ...Array.from(new Set(adapters.map((a) => a.category)))];
+  const filtered =
+    filterCategory === "All" ? adapters : adapters.filter((a) => a.category === filterCategory);
+
+  if (loading) return <div className="p-6 text-gray-500 text-sm">Loading…</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Adapters</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {Object.values(connected).filter(Boolean).length} connected / {adapters.length} total
+          </p>
+        </div>
+      </div>
 
-      {/* Header */}
-      <header className="bg-white border-b sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Adapters & Connections</h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {loading ? 'Loading…' : `${adapters.length} adapters available · ${connectedCount} connected`}
-            </p>
-          </div>
+      {/* Category filter */}
+      <div className="flex gap-1.5 mb-5 flex-wrap">
+        {categories.map((c) => (
           <button
-            onClick={() => window.location.href = '/admin'}
-            className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+            key={c}
+            onClick={() => setFilterCategory(c)}
+            className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+              filterCategory === c
+                ? "bg-blue-600 text-white"
+                : "bg-gray-800 text-gray-400 hover:text-gray-200"
+            }`}
           >
-            ← Dashboard
+            {c}
           </button>
-        </div>
-      </header>
+        ))}
+      </div>
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
-
-        {/* Stats row */}
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 mb-6">
-          {[
-            { label: 'Total', value: adapters.length, color: 'text-gray-900' },
-            { label: 'Connected', value: connectedCount, color: 'text-green-600' },
-            { label: 'Live Trading', value: adapters.filter(a => a.supports_live).length, color: 'text-blue-600' },
-            { label: 'Backtest', value: adapters.filter(a => a.supports_backtest).length, color: 'text-purple-600' },
-            { label: 'Categories', value: categories.length - 1, color: 'text-gray-600' },
-          ].map(s => (
-            <div key={s.label} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm text-center">
-              <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
-              <div className="text-xs text-gray-500 mt-0.5">{s.label}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Category filter */}
-        <div className="flex flex-wrap gap-2 mb-6">
-          {categories.map(cat => (
-            <button
-              key={cat}
-              onClick={() => setFilterCategory(cat)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                filterCategory === cat
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-400'
-              }`}
+      {/* Adapter grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {filtered.map((adapter) => {
+          const isConnected = connected[adapter.id] ?? false;
+          const catColor = CATEGORY_COLORS[adapter.category] ?? "text-gray-400 bg-gray-800 border-gray-700";
+          return (
+            <div
+              key={adapter.id}
+              className="bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-colors"
             >
-              {cat !== 'All' && CATEGORY_ICONS[cat] ? `${CATEGORY_ICONS[cat]} ` : ''}{cat}
-            </button>
-          ))}
-        </div>
+              <div className="flex items-start justify-between mb-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-white text-sm">{adapter.name}</div>
+                  <span className={`inline-block text-xs px-2 py-0.5 rounded-full border mt-1 ${catColor}`}>
+                    {adapter.category}
+                  </span>
+                </div>
+                <div
+                  className={`w-2 h-2 rounded-full mt-1 shrink-0 ${
+                    isConnected ? "bg-green-400 animate-pulse" : "bg-gray-700"
+                  }`}
+                />
+              </div>
 
-        {loading && (
-          <div className="text-center py-20 text-gray-500">Loading adapters…</div>
-        )}
+              <p className="text-xs text-gray-500 mb-3 line-clamp-2">{adapter.description}</p>
 
-        {/* Adapter cards */}
-        {!loading && (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filtered.map(adapter => {
-              const state = states[adapter.id] ?? { connected: false };
-              const isConnected = state.connected;
-              const isTesting = testing === adapter.id;
-              return (
-                <div key={adapter.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow p-5 flex flex-col">
+              <div className="flex gap-1.5 text-xs mb-3">
+                {adapter.supports_live && (
+                  <span className="px-2 py-0.5 bg-green-900/30 text-green-400 rounded">Live</span>
+                )}
+                {adapter.supports_backtest && (
+                  <span className="px-2 py-0.5 bg-blue-900/30 text-blue-400 rounded">Backtest</span>
+                )}
+              </div>
 
-                  {/* Card header */}
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <h3 className="font-bold text-gray-900 text-base">{adapter.name}</h3>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CATEGORY_COLORS[adapter.category] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {adapter.category}
-                      </span>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 ${
-                        isConnected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-gray-400'}`} />
-                        {isConnected ? 'Connected' : 'Offline'}
-                      </span>
-                    </div>
+              <div className="flex gap-2">
+                {isConnected ? (
+                  <button
+                    onClick={() => disconnect(adapter)}
+                    className="flex-1 py-1.5 bg-red-900/40 hover:bg-red-800/40 text-red-400 text-xs font-medium rounded-lg border border-red-800 transition-colors"
+                  >
+                    Disconnect
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => openWizard(adapter)}
+                    className="flex-1 py-1.5 bg-blue-700/40 hover:bg-blue-600/40 text-blue-400 text-xs font-medium rounded-lg border border-blue-700 transition-colors"
+                  >
+                    Connect
+                  </button>
+                )}
+                {adapter.docs_url && (
+                  <a
+                    href={adapter.docs_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-1.5 px-3 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded-lg border border-gray-700 transition-colors"
+                  >
+                    Docs
+                  </a>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Connection Wizard Modal */}
+      {wizardAdapter && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-md">
+            {/* Wizard header */}
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-8 h-8 bg-blue-700/30 rounded-lg flex items-center justify-center text-blue-400 font-bold">
+                🔌
+              </div>
+              <div>
+                <div className="text-white font-semibold">{wizardAdapter.name}</div>
+                <div className="text-xs text-gray-500">Connection wizard</div>
+              </div>
+            </div>
+
+            {/* Step indicator */}
+            <div className="flex items-center gap-2 mb-5">
+              {(["credentials", "verify"] as Step[]).map((s, i) => (
+                <div key={s} className="flex items-center gap-2">
+                  <div
+                    className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                      wizardStep === s
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-800 text-gray-500"
+                    }`}
+                  >
+                    {i + 1}
                   </div>
+                  <span className={`text-xs ${wizardStep === s ? "text-gray-200" : "text-gray-600"}`}>
+                    {s === "credentials" ? "Credentials" : "Verify & Connect"}
+                  </span>
+                  {i < 1 && <div className="w-6 h-px bg-gray-700" />}
+                </div>
+              ))}
+            </div>
 
-                  <p className="text-xs text-gray-500 mb-3 flex-1">{adapter.description}</p>
-
-                  {/* Capabilities */}
-                  <div className="flex gap-2 mb-4">
-                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${adapter.supports_live ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-400 line-through'}`}>
-                      Live
-                    </span>
-                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${adapter.supports_backtest ? 'bg-purple-50 text-purple-600' : 'bg-gray-50 text-gray-400 line-through'}`}>
-                      Backtest
-                    </span>
+            {wizardStep === "credentials" && (
+              <>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">API Key</label>
+                    <input
+                      type="text"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                      value={creds.apiKey}
+                      onChange={(e) => setCreds((p) => ({ ...p, apiKey: e.target.value }))}
+                      placeholder="Enter API key"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">API Secret</label>
+                    <input
+                      type="password"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                      value={creds.apiSecret}
+                      onChange={(e) => setCreds((p) => ({ ...p, apiSecret: e.target.value }))}
+                      placeholder="Enter API secret"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">
+                      Endpoint <span className="text-gray-600">(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                      value={creds.endpoint}
+                      onChange={(e) => setCreds((p) => ({ ...p, endpoint: e.target.value }))}
+                      placeholder="Custom endpoint URL"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 accent-blue-500"
+                      checked={creds.testnet}
+                      onChange={(e) => setCreds((p) => ({ ...p, testnet: e.target.checked }))}
+                    />
+                    Use testnet
+                  </label>
+                </div>
+                {wizardAdapter.docs_url && (
+                  <div className="mt-3">
                     <a
-                      href={adapter.docs_url}
+                      href={wizardAdapter.docs_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="ml-auto text-xs text-cyan-600 hover:underline"
+                      className="text-xs text-blue-400 hover:text-blue-300"
                     >
-                      Docs ↗
+                      📖 View {wizardAdapter.name} API docs →
                     </a>
                   </div>
-
-                  {/* Actions */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => void toggleConnect(adapter)}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                        isConnected
-                          ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
-                          : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'
-                      }`}
-                    >
-                      {isConnected ? 'Disconnect' : 'Connect'}
-                    </button>
-                    <button
-                      onClick={() => void testConnection(adapter)}
-                      disabled={isTesting}
-                      className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      {isTesting ? 'Testing…' : 'Test'}
-                    </button>
-                    <button
-                      onClick={() => setConfigOpen(configOpen === adapter.id ? null : adapter.id)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
-                    >
-                      ⚙
-                    </button>
-                  </div>
-
-                  {/* Inline config panel */}
-                  {configOpen === adapter.id && (
-                    <div className="mt-4 pt-4 border-t border-gray-100 space-y-2">
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-600 mb-1">API Key</label>
-                        <input
-                          type="password"
-                          placeholder="••••••••••••••••"
-                          value={states[adapter.id]?.apiKey ?? ''}
-                          onChange={e => setStates(prev => ({ ...prev, [adapter.id]: { ...prev[adapter.id], apiKey: e.target.value } }))}
-                          className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-cyan-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-600 mb-1">API Secret</label>
-                        <input
-                          type="password"
-                          placeholder="••••••••••••••••"
-                          value={states[adapter.id]?.apiSecret ?? ''}
-                          onChange={e => setStates(prev => ({ ...prev, [adapter.id]: { ...prev[adapter.id], apiSecret: e.target.value } }))}
-                          className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-cyan-400"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id={`testnet-${adapter.id}`}
-                          checked={states[adapter.id]?.testnet ?? false}
-                          onChange={e => setStates(prev => ({ ...prev, [adapter.id]: { ...prev[adapter.id], testnet: e.target.checked } }))}
-                          className="rounded"
-                        />
-                        <label htmlFor={`testnet-${adapter.id}`} className="text-xs text-gray-600">Use testnet/paper trading</label>
-                      </div>
-                      <button
-                        onClick={() => void saveConfig(adapter.id)}
-                        className="w-full py-1.5 bg-cyan-600 text-white rounded-lg text-xs font-semibold hover:bg-cyan-700"
-                      >
-                        Connect &amp; Save
-                      </button>
-                    </div>
-                  )}
+                )}
+                <div className="flex gap-3 mt-5">
+                  <button
+                    onClick={() => setWizardAdapter(null)}
+                    className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => setWizardStep("verify")}
+                    disabled={!creds.apiKey}
+                    className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+                  >
+                    Next →
+                  </button>
                 </div>
-              );
-            })}
+              </>
+            )}
+
+            {wizardStep === "verify" && (
+              <>
+                <div className="bg-gray-800 rounded-xl p-4 mb-4 text-sm space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Adapter</span>
+                    <span className="text-white">{wizardAdapter.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">API Key</span>
+                    <span className="text-white font-mono">
+                      {creds.apiKey.slice(0, 8)}…
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Testnet</span>
+                    <span className={creds.testnet ? "text-yellow-400" : "text-green-400"}>
+                      {creds.testnet ? "Yes" : "No (mainnet)"}
+                    </span>
+                  </div>
+                </div>
+
+                {testResult && (
+                  <div
+                    className={`p-3 rounded-lg mb-4 text-sm ${
+                      testResult.ok
+                        ? "bg-green-900/30 border border-green-800 text-green-400"
+                        : "bg-red-900/30 border border-red-800 text-red-400"
+                    }`}
+                  >
+                    {testResult.ok ? "✓ " : "✗ "}
+                    {testResult.msg}
+                  </div>
+                )}
+
+                <div className="flex gap-2 mb-3">
+                  <button
+                    onClick={runTest}
+                    disabled={testing}
+                    className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg border border-gray-700 transition-colors disabled:opacity-50"
+                  >
+                    {testing ? "Testing…" : "Test Connection"}
+                  </button>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setWizardStep("credentials")}
+                    className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg"
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    onClick={connect}
+                    disabled={connecting}
+                    className="flex-1 py-2 bg-green-600 hover:bg-green-500 text-white text-sm font-semibold rounded-lg disabled:opacity-50"
+                  >
+                    {connecting ? "Connecting…" : "Connect"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-        )}
-      </main>
+        </div>
+      )}
     </div>
   );
 }

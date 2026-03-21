@@ -96,7 +96,7 @@ export default function AdminDBPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="p-6 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Loading admin database...</p>
@@ -106,27 +106,7 @@ export default function AdminDBPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Admin Database</h1>
-              <p className="text-sm text-gray-600 mt-1">Manage system settings, users, and configurations</p>
-            </div>
-            <div className="flex gap-2">
-              <Button onClick={loadData}>
-                🔄 Refresh
-              </Button>
-              <Button variant="outline" onClick={() => window.location.href = '/admin'}>
-                ← Back
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-8">
+    <div className="p-6">
         {/* Settings Section */}
         <div className="mb-8">
           <h2 className="text-xl font-bold mb-4">System Settings</h2>
@@ -252,7 +232,6 @@ export default function AdminDBPage() {
             </CardContent>
           </Card>
         </div>
-      </main>
     </div>
   );
 }

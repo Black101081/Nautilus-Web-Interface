@@ -65,25 +65,7 @@ export default function ComponentsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Components Management</h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {loading ? "Loading…" : `${components.length} components · auto-refresh every 5s`}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={fetchComponents}>⟳ Refresh</Button>
-            <Button variant="outline" onClick={() => window.location.href = "/admin"}>
-              ← Back to Dashboard
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-8">
+    <div className="p-6">
         {/* Bulk Actions */}
         <Card className="mb-6">
           <CardHeader>
@@ -154,7 +136,6 @@ export default function ComponentsPage() {
             })}
           </div>
         )}
-      </main>
     </div>
   );
 }

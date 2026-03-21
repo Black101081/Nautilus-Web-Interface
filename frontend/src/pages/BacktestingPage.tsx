@@ -195,8 +195,7 @@ export default function BacktestingPage() {
   const startingBalance = result?.starting_balance ?? 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-cyan-50 p-6">
-      <div className="max-w-6xl mx-auto">
+    <div className="p-6">
 
         {/* Header */}
         <div className="flex justify-between items-center mb-6">
@@ -204,12 +203,6 @@ export default function BacktestingPage() {
             <h1 className="text-3xl font-bold text-gray-900">Backtesting</h1>
             <p className="text-gray-500 text-sm mt-0.5">Run strategy simulations on historical or synthetic data</p>
           </div>
-          <button
-            onClick={() => window.location.href = '/trader'}
-            className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm"
-          >
-            ← Back
-          </button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -662,7 +655,6 @@ export default function BacktestingPage() {
             )}
           </div>
         </div>
-      </div>
     </div>
   );
 }

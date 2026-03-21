@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import api from '../lib/api';
+import { useState, useEffect } from "react";
+import api from "../lib/api";
 
 interface Strategy {
   id: string;
@@ -7,7 +7,7 @@ interface Strategy {
   type: string;
   status: string;
   description: string;
-  config: Record<string, any>;
+  config: Record<string, unknown>;
   performance: {
     total_pnl: number;
     total_trades: number;
@@ -15,262 +15,340 @@ interface Strategy {
   };
 }
 
+const STRATEGY_SCHEMAS: Record<string, { label: string; fields: { key: string; label: string; type: string; default: number | string }[] }> = {
+  sma_crossover: {
+    label: "SMA Crossover",
+    fields: [
+      { key: "fast_period", label: "Fast Period", type: "number", default: 10 },
+      { key: "slow_period", label: "Slow Period", type: "number", default: 30 },
+      { key: "trade_size", label: "Trade Size", type: "number", default: 1.0 },
+    ],
+  },
+  ema_crossover: {
+    label: "EMA Crossover",
+    fields: [
+      { key: "fast_period", label: "Fast EMA Period", type: "number", default: 12 },
+      { key: "slow_period", label: "Slow EMA Period", type: "number", default: 26 },
+      { key: "trade_size", label: "Trade Size", type: "number", default: 1.0 },
+    ],
+  },
+  bollinger_bands: {
+    label: "Bollinger Bands",
+    fields: [
+      { key: "period", label: "Period", type: "number", default: 20 },
+      { key: "std_dev", label: "Std Dev", type: "number", default: 2.0 },
+      { key: "trade_size", label: "Trade Size", type: "number", default: 1.0 },
+    ],
+  },
+  vwap: {
+    label: "VWAP",
+    fields: [
+      { key: "period", label: "VWAP Period", type: "number", default: 20 },
+      { key: "deviation_pct", label: "Deviation %", type: "number", default: 0.5 },
+      { key: "trade_size", label: "Trade Size", type: "number", default: 1.0 },
+    ],
+  },
+  custom: {
+    label: "Custom",
+    fields: [],
+  },
+};
+
 export default function StrategiesPage() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [modalError, setModalError] = useState<string | null>(null);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [newStrategy, setNewStrategy] = useState({
-    name: '',
-    type: 'sma_crossover',
-    description: '',
-    config: {}
+  const [error, setError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    type: "sma_crossover",
+    description: "",
+    config: {} as Record<string, number | string>,
   });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchStrategies();
+    load();
   }, []);
 
-  const fetchStrategies = async () => {
+  const load = async () => {
     try {
-      const data = await api.get<{ strategies: Strategy[] }>('/api/strategies');
-      setStrategies(data.strategies || []);
-      setFetchError(null);
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to load strategies');
+      const data = await api.get<{ strategies: Strategy[] }>("/api/strategies");
+      setStrategies(data.strategies ?? []);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddStrategy = async () => {
-    setModalError(null);
+  const start = async (id: string) => {
+    await api.post(`/api/strategies/${id}/start`);
+    load();
+  };
+
+  const stop = async (id: string) => {
+    await api.post(`/api/strategies/${id}/stop`);
+    load();
+  };
+
+  const del = async (id: string) => {
+    if (!confirm("Delete this strategy?")) return;
+    await api.delete(`/api/strategies/${id}`);
+    load();
+  };
+
+  const openAdd = () => {
+    const schema = STRATEGY_SCHEMAS["sma_crossover"];
+    const defaults: Record<string, number | string> = {};
+    schema.fields.forEach((f) => (defaults[f.key] = f.default));
+    setForm({ name: "", type: "sma_crossover", description: "", config: defaults });
+    setFormError(null);
+    setShowAdd(true);
+  };
+
+  const handleTypeChange = (type: string) => {
+    const schema = STRATEGY_SCHEMAS[type] ?? { fields: [] };
+    const defaults: Record<string, number | string> = {};
+    schema.fields.forEach((f) => (defaults[f.key] = f.default));
+    setForm((p) => ({ ...p, type, config: defaults }));
+  };
+
+  const handleConfigChange = (key: string, val: string) => {
+    setForm((p) => ({ ...p, config: { ...p.config, [key]: parseFloat(val) || val } }));
+  };
+
+  const submit = async () => {
+    if (!form.name.trim()) {
+      setFormError("Name is required");
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
     try {
-      await api.post('/api/strategies', newStrategy);
-      setShowAddModal(false);
-      setNewStrategy({ name: '', type: 'sma_crossover', description: '', config: {} });
-      fetchStrategies();
-    } catch (error) {
-      setModalError(error instanceof Error ? error.message : 'Failed to add strategy');
+      await api.post("/api/strategies", form);
+      setShowAdd(false);
+      load();
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Failed to add");
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const handleStartStrategy = async (strategyId: string) => {
-    try {
-      await api.post(`/api/strategies/${strategyId}/start`);
-      fetchStrategies();
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to start strategy');
-    }
-  };
+  const schema = STRATEGY_SCHEMAS[form.type] ?? { fields: [] };
 
-  const handleStopStrategy = async (strategyId: string) => {
-    try {
-      await api.post(`/api/strategies/${strategyId}/stop`);
-      fetchStrategies();
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to stop strategy');
-    }
+  const statusColor = (s: string) => {
+    if (s === "running" || s === "active") return "text-green-400 bg-green-900/30";
+    if (s === "stopped") return "text-gray-500 bg-gray-800";
+    if (s === "error") return "text-red-400 bg-red-900/30";
+    return "text-yellow-400 bg-yellow-900/30";
   };
-
-  const handleDeleteStrategy = async (strategyId: string) => {
-    if (!confirm('Are you sure you want to delete this strategy?')) return;
-    try {
-      await api.delete(`/api/strategies/${strategyId}`);
-      fetchStrategies();
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to delete strategy');
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
-        <div className="text-center">Loading strategies...</div>
-      </div>
-    );
-  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
-      <div className="max-w-7xl mx-auto">
-        {fetchError && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
-            {fetchError}
-          </div>
-        )}
-        {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">📈 Strategy Management</h1>
-            <p className="text-gray-600">Manage and monitor your trading strategies</p>
-          </div>
-          <div className="flex gap-4">
-            <button
-              onClick={() => window.location.href = '/trader'}
-              className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
-            >
-              ← Back to Dashboard
-            </button>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
-            >
-              + Add Strategy
-            </button>
-          </div>
+    <div className="p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Strategies</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {strategies.filter((s) => s.status === "running").length} running /{" "}
+            {strategies.length} total
+          </p>
         </div>
+        <button
+          onClick={openAdd}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          + New Strategy
+        </button>
+      </div>
 
-        {/* Strategies Grid */}
-        {strategies.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-lg p-12 text-center">
-            <div className="text-6xl mb-4">📊</div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">No Strategies Yet</h3>
-            <p className="text-gray-600 mb-6">Add your first trading strategy to get started</p>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
+      {error && (
+        <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-gray-500 text-sm">Loading strategies…</div>
+      ) : strategies.length === 0 ? (
+        <div className="text-center py-16 text-gray-600">
+          <div className="text-4xl mb-3">⚡</div>
+          <div>No strategies yet</div>
+          <div className="text-xs mt-1">Click "New Strategy" to add one</div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {strategies.map((s) => (
+            <div
+              key={s.id}
+              className="bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-colors"
             >
-              + Add Strategy
-            </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {strategies.map((strategy) => (
-              <div key={strategy.id} className="bg-white rounded-xl shadow-lg p-6 hover:shadow-xl transition-shadow">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-900">{strategy.name}</h3>
-                    <p className="text-sm text-gray-500">{strategy.type}</p>
-                  </div>
-                  <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                    strategy.status === 'running' 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-gray-100 text-gray-800'
-                  }`}>
-                    {strategy.status}
-                  </span>
-                </div>
-
-                <p className="text-gray-600 text-sm mb-4">{strategy.description || 'No description'}</p>
-
-                {/* Performance Metrics */}
-                <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <div className="text-xs text-gray-500">P&L</div>
-                      <div className={`font-bold ${(strategy.performance?.total_pnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        ${(strategy.performance?.total_pnl ?? 0).toFixed(2)}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500">Trades</div>
-                      <div className="font-bold text-gray-900">{strategy.performance?.total_trades ?? 0}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500">Win Rate</div>
-                      <div className="font-bold text-blue-600">{((strategy.performance?.win_rate ?? 0) * 100).toFixed(1)}%</div>
-                    </div>
+              {/* Card header */}
+              <div className="flex items-start justify-between mb-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-white text-sm truncate">{s.name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {STRATEGY_SCHEMAS[s.type]?.label ?? s.type}
                   </div>
                 </div>
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ml-2 ${statusColor(
+                    s.status
+                  )}`}
+                >
+                  {s.status}
+                </span>
+              </div>
 
-                {/* Actions */}
-                <div className="flex gap-2">
-                  {strategy.status === 'stopped' ? (
-                    <button
-                      onClick={() => handleStartStrategy(strategy.id)}
-                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all font-semibold text-sm"
-                    >
-                      ▶ Start
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => handleStopStrategy(strategy.id)}
-                      className="flex-1 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-all font-semibold text-sm"
-                    >
-                      ⏸ Stop
-                    </button>
-                  )}
+              {/* Performance */}
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                <div className="bg-gray-800 rounded-lg p-2 text-center">
+                  <div
+                    className={`text-sm font-bold ${
+                      s.performance?.total_pnl >= 0 ? "text-green-400" : "text-red-400"
+                    }`}
+                  >
+                    {s.performance?.total_pnl >= 0 ? "+" : ""}
+                    {(s.performance?.total_pnl ?? 0).toFixed(2)}
+                  </div>
+                  <div className="text-xs text-gray-600">PnL</div>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-2 text-center">
+                  <div className="text-sm font-bold text-gray-300">
+                    {s.performance?.total_trades ?? 0}
+                  </div>
+                  <div className="text-xs text-gray-600">Trades</div>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-2 text-center">
+                  <div className="text-sm font-bold text-blue-400">
+                    {((s.performance?.win_rate ?? 0) * 100).toFixed(0)}%
+                  </div>
+                  <div className="text-xs text-gray-600">Win Rate</div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-2">
+                {s.status === "running" || s.status === "active" ? (
                   <button
-                    onClick={() => handleDeleteStrategy(strategy.id)}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all font-semibold text-sm"
+                    onClick={() => stop(s.id)}
+                    className="flex-1 py-1.5 bg-red-800/40 hover:bg-red-700/40 text-red-400 text-xs font-medium rounded-lg border border-red-800 transition-colors"
                   >
-                    🗑️
+                    Stop
                   </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Add Strategy Modal */}
-        {showAddModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">Add New Strategy</h2>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Strategy Name</label>
-                  <input
-                    type="text"
-                    value={newStrategy.name}
-                    onChange={(e) => setNewStrategy({ ...newStrategy, name: e.target.value })}
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                    placeholder="My Trading Strategy"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Strategy Type</label>
-                  <select
-                    value={newStrategy.type}
-                    onChange={(e) => setNewStrategy({ ...newStrategy, type: e.target.value })}
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                ) : (
+                  <button
+                    onClick={() => start(s.id)}
+                    className="flex-1 py-1.5 bg-green-800/40 hover:bg-green-700/40 text-green-400 text-xs font-medium rounded-lg border border-green-800 transition-colors"
                   >
-                    <option value="sma_crossover">SMA Crossover</option>
-                    <option value="rsi">RSI</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Description</label>
-                  <textarea
-                    value={newStrategy.description}
-                    onChange={(e) => setNewStrategy({ ...newStrategy, description: e.target.value })}
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                    rows={3}
-                    placeholder="Describe your strategy..."
-                  />
-                </div>
-              </div>
-
-              {modalError && (
-                <div className="mt-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">
-                  {modalError}
-                </div>
-              )}
-              <div className="flex gap-4 mt-6">
+                    Start
+                  </button>
+                )}
                 <button
-                  onClick={() => { setShowAddModal(false); setModalError(null); }}
-                  className="flex-1 px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold"
+                  onClick={() => del(s.id)}
+                  className="py-1.5 px-3 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded-lg border border-gray-700 transition-colors"
                 >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAddStrategy}
-                  className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
-                  disabled={!newStrategy.name}
-                >
-                  Add Strategy
+                  Delete
                 </button>
               </div>
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add Modal */}
+      {showAdd && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={(e) => e.target === e.currentTarget && setShowAdd(false)}
+        >
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-md">
+            <h3 className="text-white font-semibold text-lg mb-4">New Strategy</h3>
+
+            {formError && (
+              <div className="mb-3 p-2 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-xs">
+                {formError}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Name</label>
+                <input
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  value={form.name}
+                  onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="My Strategy"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Type</label>
+                <select
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  value={form.type}
+                  onChange={(e) => handleTypeChange(e.target.value)}
+                >
+                  {Object.entries(STRATEGY_SCHEMAS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Description</label>
+                <input
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  value={form.description}
+                  onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+                  placeholder="Optional description"
+                />
+              </div>
+
+              {schema.fields.length > 0 && (
+                <div>
+                  <label className="block text-xs text-gray-400 mb-2">Parameters</label>
+                  <div className="space-y-2 bg-gray-800 rounded-lg p-3">
+                    {schema.fields.map((f) => (
+                      <div key={f.key} className="flex items-center gap-3">
+                        <label className="text-xs text-gray-400 w-32 shrink-0">{f.label}</label>
+                        <input
+                          type="number"
+                          className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-blue-500"
+                          value={String(form.config[f.key] ?? f.default)}
+                          onChange={(e) => handleConfigChange(f.key, e.target.value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => setShowAdd(false)}
+                className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submit}
+                disabled={submitting}
+                className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+              >
+                {submitting ? "Adding…" : "Add Strategy"}
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
-

@@ -106,15 +106,14 @@ export default function AlertsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-yellow-50 p-8 flex items-center justify-center">
+      <div className="p-6 flex items-center justify-center">
         <div className="text-gray-600 text-lg">Loading alerts...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-yellow-50 p-8">
-      <div className="max-w-5xl mx-auto">
+    <div className="p-6">
         {triggeredNotice && (
           <div className="mb-4 bg-blue-50 border border-blue-200 text-blue-800 rounded-lg px-4 py-3 text-sm font-semibold">
             🔔 {triggeredNotice}
@@ -132,12 +131,6 @@ export default function AlertsPage() {
             <p className="text-gray-500">Configure price alerts and system notifications</p>
           </div>
           <div className="flex gap-3">
-            <button
-              onClick={() => window.location.href = '/trader'}
-              className="px-5 py-2.5 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold transition-all"
-            >
-              ← Back
-            </button>
             <button
               onClick={() => setShowModal(true)}
               className="px-5 py-2.5 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 font-semibold transition-all"
@@ -291,7 +284,6 @@ export default function AlertsPage() {
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 }

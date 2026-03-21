@@ -1,303 +1,213 @@
-
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useNotification } from "@/contexts/NotificationContext";
 import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import nautilusService, { type EngineInfo } from "@/services/nautilusService";
+import api from "@/lib/api";
+
+interface SystemMetrics {
+  cpu_percent: number;
+  memory_percent: number;
+  disk_percent: number;
+  uptime_seconds: number;
+  requests_total: number;
+  active_connections?: number;
+}
+
+function formatUptime(s: number) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+const ADMIN_SECTIONS = [
+  { path: "/admin/users", icon: "👥", label: "Users", desc: "Manage accounts & roles" },
+  { path: "/admin/adapters", icon: "🔌", label: "Adapters", desc: "Exchange connections" },
+  { path: "/admin/components", icon: "⚙️", label: "Components", desc: "Engine component lifecycle" },
+  { path: "/admin/monitoring", icon: "📡", label: "Monitoring", desc: "System metrics & logs" },
+  { path: "/admin/features", icon: "🧩", label: "Features", desc: "Feature flags" },
+  { path: "/admin/database", icon: "🗄️", label: "Database", desc: "DB inspection" },
+  { path: "/admin/db-management", icon: "🔧", label: "DB Mgmt", desc: "Backup & queries" },
+  { path: "/admin/api-config", icon: "🔑", label: "API Config", desc: "Backend API settings" },
+  { path: "/admin/settings", icon: "⚙️", label: "Settings", desc: "System preferences" },
+];
 
 export default function AdminDashboard() {
-  const { success, error, info } = useNotification();
+  const [, navigate] = useLocation();
   const [engineInfo, setEngineInfo] = useState<EngineInfo | null>(null);
+  const [sysMetrics, setSysMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadEngineInfo();
+    load();
+    const id = setInterval(load, 30_000);
+    return () => clearInterval(id);
   }, []);
 
-  const loadEngineInfo = async () => {
+  const load = async () => {
     try {
-      setLoading(true);
-      const data = await nautilusService.getEngineInfo();
-      setEngineInfo(data);
-      success('Connected to Nautilus Trader!');
-    } catch (err) {
-      error('Failed to connect to Nautilus API');
-      console.error(err);
+      const [engine, sys] = await Promise.all([
+        nautilusService.getEngineInfo(),
+        api.get<SystemMetrics>("/api/system/metrics"),
+      ]);
+      setEngineInfo(engine);
+      setSysMetrics(sys);
+    } catch {
+      /* silent */
     } finally {
       setLoading(false);
     }
   };
 
-  const handleTestNotification = () => {
-    success('Admin panel is working! This is a test notification.');
-  };
-
-  const handleRefresh = () => {
-    info('Refreshing engine info...');
-    loadEngineInfo();
-  };
+  const cpu = sysMetrics?.cpu_percent ?? 0;
+  const mem = sysMetrics?.memory_percent ?? 0;
+  const disk = sysMetrics?.disk_percent ?? 0;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Nautilus Admin Panel</h1>
-              <p className="text-sm text-gray-600 mt-1">
-                {loading ? '⏳ Connecting...' : engineInfo ? `✅ Connected: ${engineInfo.trader_id}` : '❌ Disconnected'}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button onClick={handleRefresh} disabled={loading}>
-                {loading ? 'Loading...' : '🔄 Refresh'}
-              </Button>
-              <Button variant="outline" onClick={() => window.location.href = '/'}>
-                ← Back to Home
-              </Button>
-            </div>
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-white">Admin Dashboard</h2>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg border border-gray-700 transition-colors disabled:opacity-50"
+        >
+          ⟳ Refresh
+        </button>
+      </div>
+
+      {/* Engine Status */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <div className="flex items-center gap-3">
+          <div
+            className={`w-3 h-3 rounded-full ${
+              engineInfo?.is_running ? "bg-green-400 animate-pulse" : "bg-gray-600"
+            }`}
+          />
+          <div>
+            <span className="text-sm text-white font-medium">
+              {engineInfo?.trader_id ?? "Not connected"}
+            </span>
+            <span className="text-xs text-gray-500 ml-2">
+              {engineInfo?.engine_type ?? ""}
+            </span>
           </div>
+          <span
+            className={`ml-auto text-xs px-2 py-0.5 rounded-full ${
+              engineInfo?.is_running
+                ? "bg-green-900/40 text-green-400"
+                : "bg-gray-800 text-gray-500"
+            }`}
+          >
+            {engineInfo?.status ?? "unknown"}
+          </span>
         </div>
-      </header>
+      </div>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h2>
-          <p className="text-gray-600">Welcome to Nautilus Trader Admin Interface</p>
+      {/* System KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <KpiCard
+          label="CPU"
+          value={`${cpu.toFixed(1)}%`}
+          color={cpu > 80 ? "red" : cpu > 60 ? "yellow" : "green"}
+          bar={cpu}
+        />
+        <KpiCard
+          label="Memory"
+          value={`${mem.toFixed(1)}%`}
+          color={mem > 85 ? "red" : mem > 70 ? "yellow" : "blue"}
+          bar={mem}
+        />
+        <KpiCard
+          label="Disk"
+          value={`${disk.toFixed(1)}%`}
+          color={disk > 90 ? "red" : "gray"}
+          bar={disk}
+        />
+        <KpiCard
+          label="Uptime"
+          value={formatUptime(sysMetrics?.uptime_seconds ?? 0)}
+          color="purple"
+        />
+      </div>
+
+      {/* Quick stats row */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: "Requests", value: (sysMetrics?.requests_total ?? 0).toLocaleString() },
+          { label: "Connections", value: String(sysMetrics?.active_connections ?? 0) },
+          { label: "Engine", value: engineInfo?.is_running ? "Live" : "Stopped" },
+        ].map((item) => (
+          <div key={item.label} className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-center">
+            <div className="text-xs text-gray-500 mb-1">{item.label}</div>
+            <div className="text-white font-semibold">{item.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Admin section grid */}
+      <div>
+        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">
+          Admin Sections
+        </h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {ADMIN_SECTIONS.map((sec) => (
+            <button
+              key={sec.path}
+              onClick={() => navigate(sec.path)}
+              className="bg-gray-900 hover:bg-gray-800 border border-gray-800 hover:border-gray-700 rounded-xl p-4 text-left transition-all"
+            >
+              <div className="text-xl mb-2">{sec.icon}</div>
+              <div className="text-sm text-white font-medium">{sec.label}</div>
+              <div className="text-xs text-gray-600 mt-0.5">{sec.desc}</div>
+            </button>
+          ))}
         </div>
-
-        {/* Stats Grid */}
-        <div className="grid md:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardDescription>Total Operations</CardDescription>
-              <CardTitle className="text-3xl">140+</CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardDescription>Admin Pages</CardDescription>
-              <CardTitle className="text-3xl">8</CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardDescription>API Endpoints</CardDescription>
-              <CardTitle className="text-3xl">15+</CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardDescription>Status</CardDescription>
-              <CardTitle className="text-3xl text-green-600">Live</CardTitle>
-            </CardHeader>
-          </Card>
-        </div>
-
-        {/* Feature Cards */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>💾 Database</CardTitle>
-              <CardDescription>PostgreSQL, Parquet, Redis management</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Manage database operations, backups, and cache optimization.
-              </p>
-              <Button className="w-full" onClick={() => window.location.href = '/admin/database'}>
-                Open Database
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>🔧 Components</CardTitle>
-              <CardDescription>Manage Nautilus components</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Control lifecycle of engines, adapters, and services.
-              </p>
-              <Button className="w-full" onClick={() => window.location.href = '/admin/components'}>
-                Open Components
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>🎛️ Features</CardTitle>
-              <CardDescription>Feature flags and configuration</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Toggle features and configure system parameters.
-              </p>
-              <Button className="w-full" onClick={() => window.location.href = '/admin/features'}>
-                Open Features
-              </Button>
-            </CardContent>
-          </Card>
-
-<Card>
-            <CardHeader>
-              <CardTitle>🔌 Adapters</CardTitle>
-              <CardDescription>Exchange/broker connections</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Manage connections to exchanges and brokers.
-              </p>
-              <Button className="w-full" onClick={() => window.location.href = '/admin/adapters'}>
-                Open Adapters
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>📊 Monitoring</CardTitle>
-              <CardDescription>System metrics and logs</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                View real-time metrics, logs, and alerts.
-              </p>
-              <Button className="w-full" onClick={() => window.location.href = '/admin/monitoring'}>
-                Open Monitoring
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>⚙️ Settings</CardTitle>
-              <CardDescription>System configuration</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Configure system settings and preferences.
-              </p>
-              <Button onClick={() => window.location.href = '/admin/settings'}>
-                Settings
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* API Configuration Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>🔌 API Configuration</CardTitle>
-              <CardDescription>Backend API management</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Configure and test backend API endpoints.
-              </p>
-              <Button className="w-full" onClick={() => window.location.href = '/admin/api-config'}>
-                Manage APIs
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Database Management Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>💾 Database Management</CardTitle>
-              <CardDescription>Comprehensive database administration</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Manage database connections, execute queries, and create backups.
-              </p>
-              <Button onClick={() => window.location.href = '/admin/db-management'}>
-                Manage Databases
-              </Button>
-            </CardContent>
-          </Card>
-
-{/* Positions Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>💼 Positions</CardTitle>
-              <CardDescription>Position tracking</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Monitor open positions and P&L.
-              </p>
-              <Button className="w-full" onClick={() => window.location.href = '/admin/positions'}>
-                Open Positions
-              </Button>
-            </CardContent>
-          </Card>
-
-{/* User Management Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>👥 User Management</CardTitle>
-              <CardDescription>Manage user accounts and roles</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Create, deactivate, and manage user accounts and access roles.
-              </p>
-              <Button onClick={() => window.location.href = '/admin/users'}>
-                Manage Users
-              </Button>
-            </CardContent>
-          </Card>
-
-{/* Documentation Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>📚 Documentation</CardTitle>
-              <CardDescription>View project documentation</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600 mb-4">
-                Read the documentation for the Nautilus Web Interface.
-              </p>
-              <Button onClick={() => window.location.href = '/docs'}>
-                View Documentation
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Test Notification */}
-        <div className="mt-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>🔔 Notification System</CardTitle>
-              <CardDescription>Test the notification system</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button onClick={handleTestNotification}>
-                Test Notification
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Info */}
-        <div className="mt-8 text-center text-sm text-gray-500">
-          <p>Nautilus Web Interface v1.0.0</p>
-          <p className="mt-2">
-            <a href="https://github.com/Black101081/Nautilus-Web-Interface" className="text-blue-600 hover:underline">
-              View on GitHub
-            </a>
-          </p>
-        </div>
-      </main>
+      </div>
     </div>
   );
 }
 
+function KpiCard({
+  label,
+  value,
+  color,
+  bar,
+}: {
+  label: string;
+  value: string;
+  color: "red" | "yellow" | "green" | "blue" | "gray" | "purple";
+  bar?: number;
+}) {
+  const colorMap = {
+    red: "text-red-400",
+    yellow: "text-yellow-400",
+    green: "text-green-400",
+    blue: "text-blue-400",
+    gray: "text-gray-400",
+    purple: "text-purple-400",
+  };
+  const barColor =
+    bar !== undefined
+      ? bar > 80
+        ? "bg-red-500"
+        : bar > 60
+        ? "bg-yellow-500"
+        : "bg-green-500"
+      : "";
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <div className="text-xs text-gray-500 mb-1">{label}</div>
+      <div className={`text-xl font-bold mb-2 ${colorMap[color]}`}>{value}</div>
+      {bar !== undefined && (
+        <div className="w-full bg-gray-800 rounded-full h-1">
+          <div
+            className={`h-1 rounded-full transition-all ${barColor}`}
+            style={{ width: `${Math.min(bar, 100)}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}

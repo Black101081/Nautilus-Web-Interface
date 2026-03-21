@@ -32,19 +32,7 @@ export default function FeaturesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold">Features & Services</h1>
-            <Button variant="outline" onClick={() => window.location.href = '/admin'}>
-              ← Back to Dashboard
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-8">
+    <div className="p-6">
         {/* Features Section */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
@@ -127,7 +115,6 @@ export default function FeaturesPage() {
             ))}
           </div>
         </div>
-      </main>
     </div>
   );
 }

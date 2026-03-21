@@ -98,7 +98,7 @@ export default function PerformancePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-teal-50 flex items-center justify-center">
+      <div className="p-6 flex items-center justify-center">
         <div className="text-gray-500 text-lg animate-pulse">Loading performance data…</div>
       </div>
     );
@@ -107,8 +107,7 @@ export default function PerformancePage() {
   const noData = !summary || summary.total_trades === 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-teal-50 p-6">
-      <div className="max-w-6xl mx-auto">
+    <div className="p-6">
 
         {/* Header */}
         <div className="flex justify-between items-center mb-6">
@@ -124,12 +123,6 @@ export default function PerformancePage() {
               className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium text-sm"
             >
               ⟳ Refresh
-            </button>
-            <button
-              onClick={() => window.location.href = '/trader'}
-              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm"
-            >
-              ← Back
             </button>
           </div>
         </div>
@@ -301,7 +294,6 @@ export default function PerformancePage() {
             </div>
           </>
         )}
-      </div>
     </div>
   );
 }

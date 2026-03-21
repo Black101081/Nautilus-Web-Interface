@@ -1,302 +1,418 @@
-import React, { useState, useEffect, useRef } from 'react';
-import api from '../lib/api';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useState, useEffect, useRef } from "react";
+import api from "../lib/api";
+import { useWebSocket } from "../hooks/useWebSocket";
 
 interface Order {
   id: string;
   instrument: string;
-  side: 'BUY' | 'SELL';
-  type: 'MARKET' | 'LIMIT' | 'STOP';
+  side: "BUY" | "SELL";
+  type: "MARKET" | "LIMIT" | "STOP";
   quantity: number;
   price?: number;
-  status: 'PENDING' | 'FILLED' | 'CANCELLED' | 'REJECTED';
+  status: "PENDING" | "FILLED" | "CANCELLED" | "REJECTED";
   filled_qty: number;
+  pnl?: number;
   timestamp: string;
 }
+
+const INSTRUMENTS = [
+  "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
+  "ADAUSDT","DOGEUSDT","AVAXUSDT","LINKUSDT","MATICUSDT",
+  "DOTUSDT","LTCUSDT","UNIUSDT","ATOMUSDT","FILUSDT",
+];
+
+const STATUS_COLOR: Record<string, string> = {
+  PENDING: "text-yellow-400 bg-yellow-900/30",
+  FILLED: "text-green-400 bg-green-900/30",
+  CANCELLED: "text-gray-500 bg-gray-800",
+  REJECTED: "text-red-400 bg-red-900/30",
+};
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [orderError, setOrderError] = useState<string | null>(null);
-  const [showNewOrderModal, setShowNewOrderModal] = useState(false);
-  const [newOrder, setNewOrder] = useState({
-    instrument: 'BTCUSDT',
-    side: 'BUY' as 'BUY' | 'SELL',
-    type: 'LIMIT' as 'MARKET' | 'LIMIT' | 'STOP',
+  const [error, setError] = useState<string | null>(null);
+  const [showTicket, setShowTicket] = useState(false);
+  const [form, setForm] = useState({
+    instrument: "BTCUSDT",
+    side: "BUY" as "BUY" | "SELL",
+    type: "LIMIT" as "MARKET" | "LIMIT" | "STOP",
     quantity: 0.001,
-    price: 0
+    price: 0,
   });
+  const [confirmStep, setConfirmStep] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<string>("ALL");
   const { lastMessage } = useWebSocket();
-  const prevMessageRef = useRef(lastMessage);
+  const prevRef = useRef(lastMessage);
+
+  useEffect(() => { load(); }, []);
 
   useEffect(() => {
-    fetchOrders();
-  }, []);
-
-  // Refresh on live_data WebSocket push instead of polling
-  useEffect(() => {
-    if (lastMessage && lastMessage !== prevMessageRef.current) {
-      prevMessageRef.current = lastMessage;
-      if (lastMessage.type === 'live_data') {
-        fetchOrders();
-      }
+    if (lastMessage && lastMessage !== prevRef.current) {
+      prevRef.current = lastMessage;
+      if (lastMessage.type === "live_data") load();
     }
   }, [lastMessage]);
 
-  const fetchOrders = async () => {
+  const load = async () => {
     try {
-      const data = await api.get<{ orders: Order[] }>('/api/orders');
-      setOrders(data.orders || []);
-      setFetchError(null);
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to load orders');
+      const data = await api.get<{ orders: Order[] }>("/api/orders");
+      setOrders(data.orders ?? []);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCreateOrder = async () => {
-    if (newOrder.quantity <= 0) {
-      setOrderError('Quantity must be greater than 0');
-      return;
-    }
-    setOrderError(null);
+  const cancel = async (id: string) => {
+    await api.delete(`/api/orders/${id}`);
+    load();
+  };
+
+  const openTicket = () => {
+    setForm({ instrument: "BTCUSDT", side: "BUY", type: "LIMIT", quantity: 0.001, price: 0 });
+    setSubmitError(null);
+    setConfirmStep(false);
+    setShowTicket(true);
+  };
+
+  const submitOrder = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
     try {
-      await api.post('/api/orders', newOrder);
-      setShowNewOrderModal(false);
-      setNewOrder({ instrument: 'BTCUSDT', side: 'BUY', type: 'LIMIT', quantity: 0.001, price: 0 });
-      fetchOrders();
-    } catch (error) {
-      setOrderError(error instanceof Error ? error.message : 'Failed to create order');
+      const payload: Record<string, unknown> = {
+        instrument: form.instrument,
+        side: form.side,
+        type: form.type,
+        quantity: form.quantity,
+      };
+      if (form.type !== "MARKET") payload.price = form.price;
+      await api.post("/api/orders", payload);
+      setShowTicket(false);
+      load();
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : "Failed to place order");
+      setConfirmStep(false);
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const handleCancelOrder = async (orderId: string) => {
-    if (!confirm('Cancel this order?')) return;
-    try {
-      await api.delete(`/api/orders/${orderId}`);
-      fetchOrders();
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to cancel order');
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'FILLED': return 'bg-green-100 text-green-800';
-      case 'PENDING': return 'bg-yellow-100 text-yellow-800';
-      case 'CANCELLED': return 'bg-gray-100 text-gray-800';
-      case 'REJECTED': return 'bg-red-100 text-red-800';
-      default: return 'bg-blue-100 text-blue-800';
-    }
-  };
-
-  const getSideColor = (side: string) => {
-    return side === 'BUY' ? 'text-green-600' : 'text-red-600';
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
-        <div className="text-center">Loading orders...</div>
-      </div>
-    );
-  }
+  const notional = form.quantity * (form.price || 1);
+  const filtered = filter === "ALL" ? orders : orders.filter((o) => o.status === filter);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
-      <div className="max-w-7xl mx-auto">
-        {fetchError && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
-            {fetchError}
-          </div>
-        )}
-        {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">📋 Order Management</h1>
-            <p className="text-gray-600">Monitor and manage your trading orders</p>
-          </div>
-          <div className="flex gap-4">
-            <button
-              onClick={() => window.location.href = '/trader'}
-              className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
-            >
-              ← Back to Dashboard
-            </button>
-            <button
-              onClick={() => setShowNewOrderModal(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
-            >
-              + New Order
-            </button>
-          </div>
+    <div className="p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Orders</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {orders.filter((o) => o.status === "PENDING").length} pending /{" "}
+            {orders.filter((o) => o.status === "FILLED").length} filled
+          </p>
         </div>
+        <button
+          onClick={openTicket}
+          className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          + New Order
+        </button>
+      </div>
 
-        {/* Orders Table */}
-        {orders.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-lg p-12 text-center">
-            <div className="text-6xl mb-4">📋</div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">No Orders Yet</h3>
-            <p className="text-gray-600 mb-6">Create your first order to start trading</p>
-            <button
-              onClick={() => setShowNewOrderModal(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
-            >
-              + New Order
-            </button>
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b-2 border-gray-200">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase">Order ID</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase">Instrument</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase">Side</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase">Type</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Quantity</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Price</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Filled</th>
-                    <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase">Status</th>
-                    <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase">Actions</th>
+      {error && (
+        <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Filter tabs */}
+      <div className="flex gap-1 mb-4">
+        {["ALL", "PENDING", "FILLED", "CANCELLED", "REJECTED"].map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+              filter === f
+                ? "bg-blue-600 text-white"
+                : "bg-gray-800 text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+
+      {/* Orders table */}
+      {loading ? (
+        <div className="text-gray-500 text-sm">Loading…</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16 text-gray-600">
+          <div className="text-4xl mb-3">📋</div>
+          <div>No orders{filter !== "ALL" ? ` with status ${filter}` : ""}</div>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-gray-500 border-b border-gray-800">
+                <th className="text-left py-2 pr-4">Instrument</th>
+                <th className="text-left py-2 pr-4">Side</th>
+                <th className="text-left py-2 pr-4">Type</th>
+                <th className="text-right py-2 pr-4">Qty</th>
+                <th className="text-right py-2 pr-4">Price</th>
+                <th className="text-right py-2 pr-4">Filled</th>
+                <th className="text-right py-2 pr-4">PnL</th>
+                <th className="text-left py-2 pr-4">Status</th>
+                <th className="text-left py-2 pr-4">Time</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((o) => {
+                const pnl = o.pnl ?? 0;
+                return (
+                  <tr
+                    key={o.id}
+                    className="border-b border-gray-800/50 hover:bg-gray-900/50 transition-colors"
+                  >
+                    <td className="py-2.5 pr-4 font-mono text-white font-medium">{o.instrument}</td>
+                    <td className="py-2.5 pr-4">
+                      <span
+                        className={`font-semibold ${
+                          o.side === "BUY" ? "text-green-400" : "text-red-400"
+                        }`}
+                      >
+                        {o.side}
+                      </span>
+                    </td>
+                    <td className="py-2.5 pr-4 text-gray-400">{o.type}</td>
+                    <td className="py-2.5 pr-4 text-right text-gray-300 font-mono">{o.quantity}</td>
+                    <td className="py-2.5 pr-4 text-right text-gray-300 font-mono">
+                      {o.price ? o.price.toLocaleString() : "—"}
+                    </td>
+                    <td className="py-2.5 pr-4 text-right text-gray-400 font-mono">{o.filled_qty}</td>
+                    <td className={`py-2.5 pr-4 text-right font-mono ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      {pnl !== 0 ? (pnl >= 0 ? "+" : "") + pnl.toFixed(4) : "—"}
+                    </td>
+                    <td className="py-2.5 pr-4">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLOR[o.status] ?? ""}`}>
+                        {o.status}
+                      </span>
+                    </td>
+                    <td className="py-2.5 pr-4 text-xs text-gray-600">
+                      {new Date(o.timestamp).toLocaleTimeString()}
+                    </td>
+                    <td className="py-2.5">
+                      {o.status === "PENDING" && (
+                        <button
+                          onClick={() => cancel(o.id)}
+                          className="text-xs text-red-500 hover:text-red-300 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {orders.map((order) => (
-                    <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 text-sm font-mono text-gray-900">{order.id}</td>
-                      <td className="px-6 py-4 text-sm font-semibold text-gray-900">{order.instrument}</td>
-                      <td className="px-6 py-4 text-sm">
-                        <span className={`font-bold ${getSideColor(order.side)}`}>{order.side}</span>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{order.type}</td>
-                      <td className="px-6 py-4 text-sm text-right text-gray-900">{order.quantity}</td>
-                      <td className="px-6 py-4 text-sm text-right text-gray-900">
-                        {order.price ? `$${order.price.toFixed(2)}` : '-'}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-right text-gray-600">
-                        {order.filled_qty} / {order.quantity}
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(order.status)}`}>
-                          {order.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        {order.status === 'PENDING' && (
-                          <button
-                            onClick={() => handleCancelOrder(order.id)}
-                            className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-all text-xs font-semibold"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-        {/* New Order Modal */}
-        {showNewOrderModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">Create New Order</h2>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Instrument</label>
-                  <input
-                    type="text"
-                    value={newOrder.instrument}
-                    onChange={(e) => setNewOrder({ ...newOrder, instrument: e.target.value })}
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                    placeholder="BTCUSDT"
-                  />
-                </div>
+      {/* Trade Ticket */}
+      {showTicket && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={(e) => e.target === e.currentTarget && !confirmStep && setShowTicket(false)}
+        >
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm">
+            {!confirmStep ? (
+              <>
+                <h3 className="text-white font-semibold text-lg mb-4">Trade Ticket</h3>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Side</label>
-                    <select
-                      value={newOrder.side}
-                      onChange={(e) => setNewOrder({ ...newOrder, side: e.target.value as 'BUY' | 'SELL' })}
-                      className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                    >
-                      <option value="BUY">BUY</option>
-                      <option value="SELL">SELL</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Type</label>
-                    <select
-                      value={newOrder.type}
-                      onChange={(e) => setNewOrder({ ...newOrder, type: e.target.value as 'MARKET' | 'LIMIT' | 'STOP' })}
-                      className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                    >
-                      <option value="MARKET">MARKET</option>
-                      <option value="LIMIT">LIMIT</option>
-                      <option value="STOP">STOP</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Quantity</label>
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={newOrder.quantity}
-                    onChange={(e) => setNewOrder({ ...newOrder, quantity: parseFloat(e.target.value) })}
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                {newOrder.type !== 'MARKET' && (
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Price</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newOrder.price}
-                      onChange={(e) => setNewOrder({ ...newOrder, price: parseFloat(e.target.value) })}
-                      className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                    />
+                {submitError && (
+                  <div className="mb-3 p-2 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-xs">
+                    {submitError}
                   </div>
                 )}
-              </div>
 
-              {orderError && (
-                <div className="mt-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">
-                  {orderError}
+                {/* BUY / SELL toggle */}
+                <div className="flex rounded-lg overflow-hidden border border-gray-700 mb-4">
+                  {(["BUY", "SELL"] as const).map((side) => (
+                    <button
+                      key={side}
+                      onClick={() => setForm((p) => ({ ...p, side }))}
+                      className={`flex-1 py-2 text-sm font-semibold transition-colors ${
+                        form.side === side
+                          ? side === "BUY"
+                            ? "bg-green-600 text-white"
+                            : "bg-red-600 text-white"
+                          : "bg-gray-800 text-gray-400 hover:text-gray-200"
+                      }`}
+                    >
+                      {side}
+                    </button>
+                  ))}
                 </div>
-              )}
-              <div className="flex gap-4 mt-6">
-                <button
-                  onClick={() => { setShowNewOrderModal(false); setOrderError(null); }}
-                  className="flex-1 px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreateOrder}
-                  className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
-                >
-                  Create Order
-                </button>
-              </div>
-            </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Instrument</label>
+                    <select
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                      value={form.instrument}
+                      onChange={(e) => setForm((p) => ({ ...p, instrument: e.target.value }))}
+                    >
+                      {INSTRUMENTS.map((i) => (
+                        <option key={i} value={i}>
+                          {i}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Order Type</label>
+                    <div className="flex gap-1">
+                      {(["MARKET", "LIMIT", "STOP"] as const).map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setForm((p) => ({ ...p, type: t }))}
+                          className={`flex-1 py-1.5 text-xs rounded-lg transition-colors ${
+                            form.type === t
+                              ? "bg-blue-700 text-white"
+                              : "bg-gray-800 text-gray-400 hover:text-gray-200"
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Quantity</label>
+                    <input
+                      type="number"
+                      step="0.001"
+                      min="0"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                      value={form.quantity}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, quantity: parseFloat(e.target.value) || 0 }))
+                      }
+                    />
+                  </div>
+
+                  {form.type !== "MARKET" && (
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Price (USD)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                        value={form.price}
+                        onChange={(e) =>
+                          setForm((p) => ({ ...p, price: parseFloat(e.target.value) || 0 }))
+                        }
+                      />
+                    </div>
+                  )}
+
+                  {/* Notional preview */}
+                  {form.type !== "MARKET" && form.price > 0 && (
+                    <div className="flex justify-between text-xs text-gray-500 bg-gray-800 rounded-lg p-2">
+                      <span>Notional</span>
+                      <span className="text-gray-300">${notional.toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3 mt-5">
+                  <button
+                    onClick={() => setShowTicket(false)}
+                    className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => setConfirmStep(true)}
+                    className={`flex-1 py-2 text-white text-sm font-semibold rounded-lg transition-colors ${
+                      form.side === "BUY"
+                        ? "bg-green-600 hover:bg-green-500"
+                        : "bg-red-600 hover:bg-red-500"
+                    }`}
+                  >
+                    Review Order
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-white font-semibold text-lg mb-4">Confirm Order</h3>
+                <div className="bg-gray-800 rounded-xl p-4 space-y-3 mb-5 text-sm">
+                  {[
+                    ["Direction", form.side],
+                    ["Instrument", form.instrument],
+                    ["Type", form.type],
+                    ["Quantity", String(form.quantity)],
+                    ...(form.type !== "MARKET" ? [["Price", `$${form.price.toLocaleString()}`]] : []),
+                    ...(form.type !== "MARKET" && form.price > 0
+                      ? [["Notional", `$${notional.toLocaleString()}`]]
+                      : []),
+                  ].map(([k, v]) => (
+                    <div key={k} className="flex justify-between">
+                      <span className="text-gray-500">{k}</span>
+                      <span
+                        className={`font-medium ${
+                          k === "Direction"
+                            ? v === "BUY"
+                              ? "text-green-400"
+                              : "text-red-400"
+                            : "text-white"
+                        }`}
+                      >
+                        {v}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {submitError && (
+                  <div className="mb-3 p-2 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-xs">
+                    {submitError}
+                  </div>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setConfirmStep(false)}
+                    className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={submitOrder}
+                    disabled={submitting}
+                    className={`flex-1 py-2 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-50 ${
+                      form.side === "BUY"
+                        ? "bg-green-600 hover:bg-green-500"
+                        : "bg-red-600 hover:bg-red-500"
+                    }`}
+                  >
+                    {submitting ? "Placing…" : `Place ${form.side}`}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
-

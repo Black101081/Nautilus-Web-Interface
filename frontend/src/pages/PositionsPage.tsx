@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import api from '../lib/api';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useState, useEffect, useRef } from "react";
+import api from "../lib/api";
+import { useWebSocket } from "../hooks/useWebSocket";
 
 interface Position {
   id: string;
   instrument: string;
-  side: 'LONG' | 'SHORT';
+  side: "LONG" | "SHORT";
   quantity: number;
   entry_price: number;
   current_price?: number;
@@ -13,193 +13,239 @@ interface Position {
   unrealized_pnl?: number;
   realized_pnl?: number;
   timestamp: string;
+  avg_price?: number;
+}
+
+function getPositionPnl(pos: Position): number {
+  if (pos.pnl != null) return pos.pnl;
+  return (pos.unrealized_pnl ?? 0) + (pos.realized_pnl ?? 0);
+}
+
+function getAge(ts: string): string {
+  const ms = Date.now() - new Date(ts).getTime();
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  return `${Math.floor(hr / 24)}d`;
 }
 
 export default function PositionsPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [totalPnL, setTotalPnL] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [closing, setClosing] = useState<string | null>(null);
   const { lastMessage } = useWebSocket();
-  const prevMessageRef = useRef(lastMessage);
+  const prevRef = useRef(lastMessage);
+
+  useEffect(() => { load(); }, []);
 
   useEffect(() => {
-    fetchPositions();
-  }, []);
-
-  // Refresh on live_data WebSocket push instead of polling
-  useEffect(() => {
-    if (lastMessage && lastMessage !== prevMessageRef.current) {
-      prevMessageRef.current = lastMessage;
-      if (lastMessage.type === 'live_data') {
-        fetchPositions();
-      }
+    if (lastMessage && lastMessage !== prevRef.current) {
+      prevRef.current = lastMessage;
+      if (lastMessage.type === "live_data") load();
     }
   }, [lastMessage]);
 
-  const getPositionPnl = (pos: Position): number => {
-    if (pos.pnl != null) return pos.pnl;
-    return (pos.unrealized_pnl ?? 0) + (pos.realized_pnl ?? 0);
-  };
-
-  const fetchPositions = async () => {
+  const load = async () => {
     try {
-      const data = await api.get<{ positions: Position[] }>('/api/positions');
-      const rows = data.positions || [];
-      setPositions(rows);
-      const total = rows.reduce((sum: number, pos: Position) => sum + getPositionPnl(pos), 0);
-      setTotalPnL(total);
-      setFetchError(null);
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to load positions');
+      const data = await api.get<{ positions: Position[] }>("/api/positions");
+      setPositions(data.positions ?? []);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleClosePosition = async (positionId: string) => {
-    if (!confirm('Close this position?')) return;
+  const closePosition = async (id: string, qty?: number) => {
+    setClosing(id);
     try {
-      await api.post(`/api/positions/${positionId}/close`);
-      fetchPositions();
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to close position');
+      const body = qty !== undefined ? { quantity: qty } : {};
+      await api.post(`/api/positions/${id}/close`, body);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to close");
+    } finally {
+      setClosing(null);
     }
   };
 
-  const getSideColor = (side: string) => {
-    return side === 'LONG' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+  const closeAll = async (side?: "LONG" | "SHORT") => {
+    const toClose = side ? positions.filter((p) => p.side === side) : positions;
+    for (const p of toClose) await closePosition(p.id);
   };
 
-  const getPnLColor = (pnl: number) => {
-    return pnl >= 0 ? 'text-green-600' : 'text-red-600';
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
-        <div className="text-center">Loading positions...</div>
-      </div>
-    );
-  }
+  const totalPnl = positions.reduce((s, p) => s + getPositionPnl(p), 0);
+  const longs = positions.filter((p) => p.side === "LONG");
+  const shorts = positions.filter((p) => p.side === "SHORT");
+  const longPnl = longs.reduce((s, p) => s + getPositionPnl(p), 0);
+  const shortPnl = shorts.reduce((s, p) => s + getPositionPnl(p), 0);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
-      <div className="max-w-7xl mx-auto">
-        {fetchError && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
-            {fetchError}
+    <div className="p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Positions</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {longs.length} long / {shorts.length} short
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Summary row */}
+      {positions.length > 0 && (
+        <div className="grid grid-cols-3 gap-3 mb-5">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-center">
+            <div className={`text-lg font-bold ${totalPnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {totalPnl >= 0 ? "+" : ""}{totalPnl.toFixed(4)}
+            </div>
+            <div className="text-xs text-gray-500">Net PnL</div>
           </div>
-        )}
-        {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">💼 Position Management</h1>
-            <p className="text-gray-600">Monitor your open positions and P&L</p>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-center">
+            <div className={`text-lg font-bold ${longPnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {longPnl >= 0 ? "+" : ""}{longPnl.toFixed(4)}
+            </div>
+            <div className="text-xs text-gray-500">Long PnL ({longs.length})</div>
           </div>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-center">
+            <div className={`text-lg font-bold ${shortPnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {shortPnl >= 0 ? "+" : ""}{shortPnl.toFixed(4)}
+            </div>
+            <div className="text-xs text-gray-500">Short PnL ({shorts.length})</div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch actions */}
+      {positions.length > 0 && (
+        <div className="flex gap-2 mb-4">
           <button
-            onClick={() => window.location.href = '/trader'}
-            className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
+            onClick={() => closeAll("LONG")}
+            disabled={longs.length === 0}
+            className="px-3 py-1.5 text-xs bg-red-900/40 hover:bg-red-800/40 text-red-400 border border-red-800 rounded-lg transition-colors disabled:opacity-40"
           >
-            ← Back to Dashboard
+            Close All Long ({longs.length})
+          </button>
+          <button
+            onClick={() => closeAll("SHORT")}
+            disabled={shorts.length === 0}
+            className="px-3 py-1.5 text-xs bg-red-900/40 hover:bg-red-800/40 text-red-400 border border-red-800 rounded-lg transition-colors disabled:opacity-40"
+          >
+            Close All Short ({shorts.length})
+          </button>
+          <button
+            onClick={() => closeAll()}
+            className="px-3 py-1.5 text-xs bg-red-700/40 hover:bg-red-600/40 text-red-300 border border-red-700 rounded-lg font-medium transition-colors"
+          >
+            Close All ({positions.length})
           </button>
         </div>
+      )}
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="text-sm text-gray-500 mb-2">Open Positions</div>
-            <div className="text-3xl font-bold text-gray-900">{positions.length}</div>
-          </div>
-          
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="text-sm text-gray-500 mb-2">Total P&L</div>
-            <div className={`text-3xl font-bold ${getPnLColor(totalPnL)}`}>
-              ${totalPnL.toFixed(2)}
-            </div>
-          </div>
-          
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="text-sm text-gray-500 mb-2">Long Positions</div>
-            <div className="text-3xl font-bold text-green-600">
-              {positions.filter(p => p.side === 'LONG').length}
-            </div>
-          </div>
-          
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="text-sm text-gray-500 mb-2">Short Positions</div>
-            <div className="text-3xl font-bold text-red-600">
-              {positions.filter(p => p.side === 'SHORT').length}
-            </div>
-          </div>
+      {loading ? (
+        <div className="text-gray-500 text-sm">Loading…</div>
+      ) : positions.length === 0 ? (
+        <div className="text-center py-16 text-gray-600">
+          <div className="text-4xl mb-3">💼</div>
+          <div>No open positions</div>
         </div>
-
-        {/* Positions Table */}
-        {positions.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-lg p-12 text-center">
-            <div className="text-6xl mb-4">💼</div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">No Open Positions</h3>
-            <p className="text-gray-600 mb-6">You don't have any open positions at the moment</p>
-            <button
-              onClick={() => window.location.href = '/trader/orders'}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
-            >
-              Create Order
-            </button>
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b-2 border-gray-200">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase">Position ID</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase">Instrument</th>
-                    <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase">Side</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Quantity</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Entry Price</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">Current Price</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase">P&L</th>
-                    <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {positions.map((position) => (
-                    <tr key={position.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 text-sm font-mono text-gray-900">{position.id}</td>
-                      <td className="px-6 py-4 text-sm font-semibold text-gray-900">{position.instrument}</td>
-                      <td className="px-6 py-4 text-center">
-                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getSideColor(position.side)}`}>
-                          {position.side}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-right text-gray-900">{position.quantity}</td>
-                      <td className="px-6 py-4 text-sm text-right text-gray-900">${position.entry_price.toFixed(2)}</td>
-                      <td className="px-6 py-4 text-sm text-right text-gray-900">
-                        {position.current_price != null ? `$${position.current_price.toFixed(2)}` : '-'}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-right">
-                        <span className={`font-bold ${getPnLColor(getPositionPnl(position))}`}>
-                          ${getPositionPnl(position).toFixed(2)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-gray-500 border-b border-gray-800">
+                <th className="text-left py-2 pr-4">Instrument</th>
+                <th className="text-left py-2 pr-4">Side</th>
+                <th className="text-right py-2 pr-4">Qty</th>
+                <th className="text-right py-2 pr-4">Entry</th>
+                <th className="text-right py-2 pr-4">Current</th>
+                <th className="text-right py-2 pr-4">PnL</th>
+                <th className="text-right py-2 pr-4">PnL %</th>
+                <th className="text-left py-2 pr-4">Age</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {positions.map((p) => {
+                const pnl = getPositionPnl(p);
+                const entry = p.entry_price || p.avg_price || 0;
+                const pnlPct = entry > 0 ? (pnl / (entry * p.quantity)) * 100 : 0;
+                return (
+                  <tr
+                    key={p.id}
+                    className="border-b border-gray-800/50 hover:bg-gray-900/50 transition-colors"
+                  >
+                    <td className="py-2.5 pr-4 font-mono text-white font-medium">{p.instrument}</td>
+                    <td className="py-2.5 pr-4">
+                      <span
+                        className={`font-semibold ${
+                          p.side === "LONG" ? "text-green-400" : "text-red-400"
+                        }`}
+                      >
+                        {p.side}
+                      </span>
+                    </td>
+                    <td className="py-2.5 pr-4 text-right font-mono text-gray-300">{p.quantity}</td>
+                    <td className="py-2.5 pr-4 text-right font-mono text-gray-400">
+                      {entry.toLocaleString()}
+                    </td>
+                    <td className="py-2.5 pr-4 text-right font-mono text-gray-400">
+                      {p.current_price ? p.current_price.toLocaleString() : "—"}
+                    </td>
+                    <td
+                      className={`py-2.5 pr-4 text-right font-mono font-semibold ${
+                        pnl >= 0 ? "text-green-400" : "text-red-400"
+                      }`}
+                    >
+                      {pnl >= 0 ? "+" : ""}
+                      {pnl.toFixed(4)}
+                    </td>
+                    <td
+                      className={`py-2.5 pr-4 text-right text-xs ${
+                        pnlPct >= 0 ? "text-green-400" : "text-red-400"
+                      }`}
+                    >
+                      {pnlPct >= 0 ? "+" : ""}
+                      {pnlPct.toFixed(2)}%
+                    </td>
+                    <td className="py-2.5 pr-4 text-xs text-gray-600">{getAge(p.timestamp)}</td>
+                    <td className="py-2.5">
+                      <div className="flex gap-1.5">
                         <button
-                          onClick={() => handleClosePosition(position.id)}
-                          className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-all text-xs font-semibold"
+                          onClick={() => closePosition(p.id, p.quantity / 2)}
+                          disabled={closing === p.id}
+                          className="text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded transition-colors disabled:opacity-50"
+                          title="Close half"
                         >
-                          Close
+                          ½
                         </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
+                        <button
+                          onClick={() => closePosition(p.id)}
+                          disabled={closing === p.id}
+                          className="text-xs px-2 py-1 bg-red-900/40 hover:bg-red-800/40 text-red-400 rounded border border-red-800 transition-colors disabled:opacity-50"
+                        >
+                          {closing === p.id ? "…" : "Close"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
-

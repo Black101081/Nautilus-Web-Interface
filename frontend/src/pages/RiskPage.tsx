@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import api from '../lib/api';
+import { useState, useEffect } from "react";
+import api from "../lib/api";
 
 interface RiskMetrics {
   total_exposure: number;
@@ -17,315 +17,257 @@ interface RiskLimits {
   max_positions: number;
 }
 
+function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
+  const pct = Math.min((value / Math.max(max, 1)) * 100, 100);
+  const barColor =
+    pct > 80 ? "bg-red-500" : pct > 60 ? "bg-yellow-500" : `bg-${color}-500`;
+  return (
+    <div className="w-full bg-gray-800 rounded-full h-1.5">
+      <div
+        className={`h-1.5 rounded-full transition-all ${barColor}`}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
 export default function RiskPage() {
   const [metrics, setMetrics] = useState<RiskMetrics | null>(null);
   const [limits, setLimits] = useState<RiskLimits | null>(null);
   const [loading, setLoading] = useState(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [editingLimits, setEditingLimits] = useState(false);
-  const [newLimits, setNewLimits] = useState<RiskLimits>({
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState<RiskLimits>({
     max_order_size: 10000,
     max_position_size: 50000,
     max_daily_loss: 5000,
-    max_positions: 10
+    max_positions: 10,
   });
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
+    load();
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
   }, []);
 
-  const fetchData = async () => {
+  const load = async () => {
     try {
-      const [metricsData, limitsData] = await Promise.all([
-        api.get<RiskMetrics>('/api/risk/metrics'),
-        api.get<RiskLimits>('/api/risk/limits'),
+      const [m, l] = await Promise.all([
+        api.get<RiskMetrics>("/api/risk/metrics"),
+        api.get<RiskLimits>("/api/risk/limits"),
       ]);
-      setMetrics(metricsData);
-      setLimits(limitsData);
-      setNewLimits(limitsData);
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to load risk data');
+      setMetrics(m);
+      setLimits(l);
+      setEditForm(l);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load risk data");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleUpdateLimits = async () => {
+  const save = async () => {
+    setSaving(true);
     try {
-      await api.post('/api/risk/limits', newLimits);
-      setEditingLimits(false);
-      fetchData();
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : 'Failed to update limits');
+      await api.post("/api/risk/limits", editForm);
+      setEditing(false);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save limits");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const getExposurePercentage = () => {
-    if (!metrics || !limits) return 0;
-    return (metrics.total_exposure / limits.max_position_size) * 100;
-  };
+  const marginTotal = (metrics?.margin_used ?? 0) + (metrics?.margin_available ?? 0);
+  const marginPct = marginTotal > 0 ? (metrics!.margin_used / marginTotal) * 100 : 0;
+  const drawdown = metrics?.max_drawdown ?? 0;
 
-  const getMarginPercentage = () => {
-    if (!metrics) return 0;
-    const total = metrics.margin_used + metrics.margin_available;
-    return total > 0 ? (metrics.margin_used / total) * 100 : 0;
-  };
+  const riskAlerts: string[] = [];
+  if (drawdown > 15) riskAlerts.push(`Max drawdown ${drawdown.toFixed(2)}% exceeds 15% threshold`);
+  if (marginPct > 80) riskAlerts.push(`Margin utilization ${marginPct.toFixed(0)}% critically high`);
+  if (metrics && limits && metrics.position_count >= limits.max_positions)
+    riskAlerts.push("Position count at maximum limit");
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
-        <div className="text-center">Loading risk data...</div>
-      </div>
-    );
-  }
+  if (loading) return <div className="p-6 text-gray-500 text-sm">Loading…</div>;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">🛡️ Risk Management</h1>
-            <p className="text-gray-600">Monitor and control trading risk</p>
-          </div>
-          <button
-            onClick={() => window.location.href = '/trader'}
-            className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-semibold"
-          >
-            ← Back to Dashboard
-          </button>
-        </div>
-
-        {/* Risk Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-sm text-gray-500">Total Exposure</div>
-              <div className="text-2xl">💰</div>
-            </div>
-            <div className="text-3xl font-bold text-gray-900 mb-2">
-              ${metrics?.total_exposure.toFixed(2)}
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div 
-                className="bg-blue-600 h-2 rounded-full transition-all"
-                style={{ width: `${Math.min(getExposurePercentage(), 100)}%` }}
-              />
-            </div>
-            <div className="text-xs text-gray-500 mt-1">
-              {getExposurePercentage().toFixed(1)}% of max position size
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-sm text-gray-500">Margin Usage</div>
-              <div className="text-2xl">📊</div>
-            </div>
-            <div className="text-3xl font-bold text-gray-900 mb-2">
-              ${metrics?.margin_used.toFixed(2)}
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div 
-                className={`h-2 rounded-full transition-all ${
-                  getMarginPercentage() > 80 ? 'bg-red-600' : 
-                  getMarginPercentage() > 60 ? 'bg-yellow-600' : 'bg-green-600'
-                }`}
-                style={{ width: `${Math.min(getMarginPercentage(), 100)}%` }}
-              />
-            </div>
-            <div className="text-xs text-gray-500 mt-1">
-              ${metrics?.margin_available.toFixed(2)} available
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-sm text-gray-500">Max Drawdown</div>
-              <div className="text-2xl">📉</div>
-            </div>
-            <div className="text-3xl font-bold text-red-600 mb-2">
-              {metrics?.max_drawdown.toFixed(2)}%
-            </div>
-            <div className="text-xs text-gray-500 mt-1">
-              VaR (1D): ${metrics?.var_1d.toFixed(2)}
-            </div>
-          </div>
-        </div>
-
-        {/* Risk Limits */}
-        <div className="bg-white rounded-xl shadow-lg p-8 mb-8">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold text-gray-900">Risk Limits</h2>
-            {!editingLimits ? (
-              <button
-                onClick={() => setEditingLimits(true)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
-              >
-                ✏️ Edit Limits
-              </button>
-            ) : (
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    setEditingLimits(false);
-                    setNewLimits(limits!);
-                  }}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleUpdateLimits}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all font-semibold"
-                >
-                  💾 Save
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Max Order Size ($)
-              </label>
-              {editingLimits ? (
-                <input
-                  type="number"
-                  value={newLimits.max_order_size}
-                  onChange={(e) => setNewLimits({ ...newLimits, max_order_size: parseFloat(e.target.value) })}
-                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                />
-              ) : (
-                <div className="text-2xl font-bold text-gray-900">
-                  ${limits?.max_order_size.toFixed(2)}
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Max Position Size ($)
-              </label>
-              {editingLimits ? (
-                <input
-                  type="number"
-                  value={newLimits.max_position_size}
-                  onChange={(e) => setNewLimits({ ...newLimits, max_position_size: parseFloat(e.target.value) })}
-                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                />
-              ) : (
-                <div className="text-2xl font-bold text-gray-900">
-                  ${limits?.max_position_size.toFixed(2)}
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Max Daily Loss ($)
-              </label>
-              {editingLimits ? (
-                <input
-                  type="number"
-                  value={newLimits.max_daily_loss}
-                  onChange={(e) => setNewLimits({ ...newLimits, max_daily_loss: parseFloat(e.target.value) })}
-                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                />
-              ) : (
-                <div className="text-2xl font-bold text-gray-900">
-                  ${limits?.max_daily_loss.toFixed(2)}
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Max Open Positions
-              </label>
-              {editingLimits ? (
-                <input
-                  type="number"
-                  value={newLimits.max_positions}
-                  onChange={(e) => setNewLimits({ ...newLimits, max_positions: parseInt(e.target.value) })}
-                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                />
-              ) : (
-                <div className="text-2xl font-bold text-gray-900">
-                  {limits?.max_positions}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Risk Alerts */}
-        <div className="bg-white rounded-xl shadow-lg p-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Risk Alerts</h2>
-          
-          <div className="space-y-4">
-            {getMarginPercentage() > 80 && (
-              <div className="bg-red-50 border-l-4 border-red-600 p-4 rounded">
-                <div className="flex items-center">
-                  <div className="text-2xl mr-3">⚠️</div>
-                  <div>
-                    <div className="font-bold text-red-900">High Margin Usage</div>
-                    <div className="text-sm text-red-700">
-                      Margin usage is above 80%. Consider reducing exposure.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {metrics && metrics.position_count >= (limits?.max_positions || 10) && (
-              <div className="bg-yellow-50 border-l-4 border-yellow-600 p-4 rounded">
-                <div className="flex items-center">
-                  <div className="text-2xl mr-3">⚠️</div>
-                  <div>
-                    <div className="font-bold text-yellow-900">Max Positions Reached</div>
-                    <div className="text-sm text-yellow-700">
-                      You have reached the maximum number of open positions.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {getExposurePercentage() > 90 && (
-              <div className="bg-red-50 border-l-4 border-red-600 p-4 rounded">
-                <div className="flex items-center">
-                  <div className="text-2xl mr-3">🚨</div>
-                  <div>
-                    <div className="font-bold text-red-900">Critical Exposure Level</div>
-                    <div className="text-sm text-red-700">
-                      Total exposure is above 90% of maximum. Immediate action required.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {getMarginPercentage() < 50 && getExposurePercentage() < 50 && (
-              <div className="bg-green-50 border-l-4 border-green-600 p-4 rounded">
-                <div className="flex items-center">
-                  <div className="text-2xl mr-3">✅</div>
-                  <div>
-                    <div className="font-bold text-green-900">All Systems Normal</div>
-                    <div className="text-sm text-green-700">
-                      Risk metrics are within acceptable ranges.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-white">Risk Management</h2>
+        <button
+          onClick={() => setEditing(true)}
+          className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg border border-gray-700 transition-colors"
+        >
+          Edit Limits
+        </button>
       </div>
+
+      {error && (
+        <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Risk Alerts */}
+      {riskAlerts.length > 0 && (
+        <div className="space-y-2">
+          {riskAlerts.map((a, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-2 p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-300 text-sm"
+            >
+              <span>🚨</span>
+              <span>{a}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Metrics Grid */}
+      {metrics && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Margin utilization */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-gray-400">Margin Utilization</span>
+              <span
+                className={`font-semibold ${
+                  marginPct > 80 ? "text-red-400" : marginPct > 60 ? "text-yellow-400" : "text-green-400"
+                }`}
+              >
+                {marginPct.toFixed(1)}%
+              </span>
+            </div>
+            <ProgressBar value={metrics.margin_used} max={marginTotal} color="blue" />
+            <div className="flex justify-between text-xs text-gray-600 mt-1.5">
+              <span>Used: ${metrics.margin_used.toLocaleString()}</span>
+              <span>Avail: ${metrics.margin_available.toLocaleString()}</span>
+            </div>
+          </div>
+
+          {/* Drawdown */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-gray-400">Max Drawdown</span>
+              <span
+                className={`font-semibold ${
+                  drawdown > 15 ? "text-red-400" : drawdown > 8 ? "text-yellow-400" : "text-green-400"
+                }`}
+              >
+                {drawdown.toFixed(2)}%
+              </span>
+            </div>
+            <ProgressBar value={drawdown} max={20} color="orange" />
+            <div className="text-xs text-gray-600 mt-1.5">Threshold: 15%</div>
+          </div>
+
+          {/* Total Exposure */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-gray-400">Total Exposure</span>
+              <span className="text-orange-400 font-semibold">
+                ${metrics.total_exposure.toLocaleString()}
+              </span>
+            </div>
+            {limits && (
+              <>
+                <ProgressBar value={metrics.total_exposure} max={limits.max_position_size} color="orange" />
+                <div className="text-xs text-gray-600 mt-1.5">
+                  Limit: ${limits.max_position_size.toLocaleString()}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* VaR */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-gray-400">VaR (1-Day 95%)</span>
+              <span className="text-purple-400 font-semibold">
+                ${metrics.var_1d.toLocaleString()}
+              </span>
+            </div>
+            {limits && (
+              <>
+                <ProgressBar value={metrics.var_1d} max={limits.max_daily_loss} color="purple" />
+                <div className="text-xs text-gray-600 mt-1.5">
+                  Daily loss limit: ${limits.max_daily_loss.toLocaleString()}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Current Limits */}
+      {limits && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-gray-300 mb-3">Current Limits</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            {[
+              { label: "Max Order Size", value: `$${limits.max_order_size.toLocaleString()}` },
+              { label: "Max Position", value: `$${limits.max_position_size.toLocaleString()}` },
+              { label: "Max Daily Loss", value: `$${limits.max_daily_loss.toLocaleString()}` },
+              { label: "Max Positions", value: `${limits.max_positions}` },
+            ].map((item) => (
+              <div key={item.label}>
+                <div className="text-xs text-gray-600 mb-0.5">{item.label}</div>
+                <div className="text-gray-200 font-medium">{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Edit modal */}
+      {editing && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={(e) => e.target === e.currentTarget && setEditing(false)}
+        >
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm">
+            <h3 className="text-white font-semibold text-lg mb-4">Edit Risk Limits</h3>
+            <div className="space-y-3">
+              {[
+                { key: "max_order_size" as const, label: "Max Order Size ($)" },
+                { key: "max_position_size" as const, label: "Max Position Size ($)" },
+                { key: "max_daily_loss" as const, label: "Max Daily Loss ($)" },
+                { key: "max_positions" as const, label: "Max Positions" },
+              ].map((f) => (
+                <div key={f.key}>
+                  <label className="block text-xs text-gray-400 mb-1">{f.label}</label>
+                  <input
+                    type="number"
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                    value={editForm[f.key]}
+                    onChange={(e) =>
+                      setEditForm((p) => ({ ...p, [f.key]: parseFloat(e.target.value) || 0 }))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => setEditing(false)}
+                className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={save}
+                disabled={saving}
+                className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-

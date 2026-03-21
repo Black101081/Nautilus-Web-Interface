@@ -174,15 +174,14 @@ export default function MarketDataPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 p-8 flex items-center justify-center">
+      <div className="p-6 flex items-center justify-center">
         <div className="text-gray-600 text-lg">Loading market data...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 p-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="p-6">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
@@ -196,12 +195,6 @@ export default function MarketDataPage() {
               className="px-5 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold transition-all disabled:opacity-50"
             >
               {refreshing ? '⟳ Refreshing...' : '⟳ Refresh'}
-            </button>
-            <button
-              onClick={() => window.location.href = '/trader'}
-              className="px-5 py-2.5 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold"
-            >
-              ← Back
             </button>
           </div>
         </div>
@@ -423,7 +416,6 @@ export default function MarketDataPage() {
             )}
           </div>
         </div>
-      </div>
     </div>
   );
 }

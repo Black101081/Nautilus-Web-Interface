@@ -37,20 +37,8 @@ export default function DatabasePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold">Database Management</h1>
-            <Button variant="outline" onClick={() => window.location.href = '/admin'}>
-              ← Back to Dashboard
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-8">
-        <div className="grid md:grid-cols-3 gap-6">
+    <div className="p-6">
+      <div className="grid md:grid-cols-3 gap-6">
           {/* PostgreSQL */}
           <Card>
             <CardHeader>
@@ -122,7 +110,6 @@ export default function DatabasePage() {
             </div>
           </CardContent>
         </Card>
-      </main>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { loadApiConfig } from "./config";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -34,37 +34,44 @@ import LoginPage from "./pages/LoginPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import CatalogPage from "./pages/CatalogPage";
 import { API_CONFIG } from "./config";
+import TraderLayout from "./components/TraderLayout";
+import AdminLayout from "./components/AdminLayout";
 
 function Router() {
   useEffect(() => {
     loadApiConfig();
   }, []);
 
+  const T = (Page: React.ComponentType) => () => <TraderLayout><Page /></TraderLayout>;
+  const A = (Page: React.ComponentType) => () => <AdminLayout><Page /></AdminLayout>;
+
   return (
     <Switch>
       <Route path="/" component={Home} />
-      <Route path="/admin" component={AdminDashboard} />
-      <Route path="/admin/database" component={DatabasePage} />
-      <Route path="/admin/components" component={ComponentsPage} />
-      <Route path="/admin/features" component={FeaturesPage} />
-      <Route path="/admin/adapters" component={AdaptersPage} />
-      <Route path="/admin/monitoring" component={MonitoringPage} />
-      <Route path="/admin/settings" component={SettingsPage} />
-      <Route path="/admin/database-management" component={AdminDBPage} />
-      <Route path="/admin/api-config" component={ApiConfigPage} />
-      <Route path="/admin/db-management" component={DatabaseManagementPage} />
-      <Route path="/admin/users" component={UsersPage} />
-      <Route path="/trader" component={TraderDashboard} />
-      <Route path="/trader/strategies" component={StrategiesPage} />
-      <Route path="/trader/orders" component={OrdersPage} />
-      <Route path="/trader/positions" component={PositionsPage} />
-      <Route path="/trader/risk" component={RiskPage} />
-      <Route path="/trader/market-data" component={MarketDataPage} />
-      <Route path="/trader/performance" component={PerformancePage} />
-      <Route path="/trader/alerts" component={AlertsPage} />
-      <Route path="/trader/backtesting" component={BacktestingPage} />
-      <Route path="/trader/analytics" component={AnalyticsPage} />
-      <Route path="/trader/catalog" component={CatalogPage} />
+      {/* Admin routes — wrapped in AdminLayout */}
+      <Route path="/admin" component={A(AdminDashboard)} />
+      <Route path="/admin/database" component={A(DatabasePage)} />
+      <Route path="/admin/components" component={A(ComponentsPage)} />
+      <Route path="/admin/features" component={A(FeaturesPage)} />
+      <Route path="/admin/adapters" component={A(AdaptersPage)} />
+      <Route path="/admin/monitoring" component={A(MonitoringPage)} />
+      <Route path="/admin/settings" component={A(SettingsPage)} />
+      <Route path="/admin/database-management" component={A(AdminDBPage)} />
+      <Route path="/admin/api-config" component={A(ApiConfigPage)} />
+      <Route path="/admin/db-management" component={A(DatabaseManagementPage)} />
+      <Route path="/admin/users" component={A(UsersPage)} />
+      {/* Trader routes — wrapped in TraderLayout */}
+      <Route path="/trader" component={T(TraderDashboard)} />
+      <Route path="/trader/strategies" component={T(StrategiesPage)} />
+      <Route path="/trader/orders" component={T(OrdersPage)} />
+      <Route path="/trader/positions" component={T(PositionsPage)} />
+      <Route path="/trader/risk" component={T(RiskPage)} />
+      <Route path="/trader/market-data" component={T(MarketDataPage)} />
+      <Route path="/trader/performance" component={T(PerformancePage)} />
+      <Route path="/trader/alerts" component={T(AlertsPage)} />
+      <Route path="/trader/backtesting" component={T(BacktestingPage)} />
+      <Route path="/trader/analytics" component={T(AnalyticsPage)} />
+      <Route path="/trader/catalog" component={T(CatalogPage)} />
       <Route path="/docs" component={DocsPage} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
