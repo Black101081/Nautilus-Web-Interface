@@ -286,31 +286,8 @@ export default function DatabaseManagementPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">💾 Database Management</h1>
-              <p className="text-sm text-gray-600 mt-1">
-                Comprehensive database administration system
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button onClick={loadConnections} variant="outline">
-                ↻ Refresh
-              </Button>
-              <Button onClick={() => window.history.back()} variant="outline">
-                ← Back
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
+    <div className="p-6">
+      <div>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Left Sidebar - Connections */}
           <div className="lg:col-span-1">
@@ -729,7 +706,7 @@ export default function DatabaseManagementPage() {
             )}
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

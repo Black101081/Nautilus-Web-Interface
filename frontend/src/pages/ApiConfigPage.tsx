@@ -275,31 +275,9 @@ export default function ApiConfigPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">⚙️ API Configuration & Routes</h1>
-              <p className="text-sm text-gray-600 mt-1">
-                Manage backend API endpoints and their routes
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button onClick={loadEndpoints} variant="outline">
-                ↻ Refresh
-              </Button>
-              <Button onClick={() => window.history.back()} variant="outline">
-                ← Back
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
-
+    <div className="p-6">
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
+      <div>
         {loading ? (
           <div className="text-center py-12 text-gray-500">Loading...</div>
         ) : (
@@ -575,7 +553,7 @@ export default function ApiConfigPage() {
             </div>
           </div>
         )}
-      </main>
+      </div>
     </div>
   );
 }
